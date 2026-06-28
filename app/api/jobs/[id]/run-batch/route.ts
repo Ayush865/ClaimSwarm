@@ -6,13 +6,13 @@ import { search } from "@/lib/serper";
 import { computeCost } from "@/lib/cost";
 import {
   VERIFIER_PUBLIC_SYSTEM,
-  VERIFIER_INTERNAL_SYSTEM,
   GITHUB_VERIFIER_SYSTEM,
+  BATCH_CONSISTENCY_SYSTEM,
   makeVerifierPublicUser,
-  makeVerifierInternalUser,
   makeGithubVerifierUser,
+  makeBatchConsistencyUser,
 } from "@/lib/prompts";
-import { VerifierOutputSchema } from "@/lib/types";
+import { VerifierOutputSchema, BatchConsistencyOutputSchema } from "@/lib/types";
 import pLimit from "p-limit";
 
 export const maxDuration = 60;
@@ -105,17 +105,49 @@ export async function POST(
 
   // ── Pre-load per-candidate context ──────────────────────────────────────────
 
-  // 1. All claims grouped by candidate (for internal consistency checker)
-  const { data: allClaims } = await db
-    .from("claims")
-    .select("text, candidate_id")
-    .eq("job_id", jobId);
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  let processed = 0;
 
-  const claimsByCandidate = new Map<string, string[]>();
-  for (const c of allClaims ?? []) {
-    const arr = claimsByCandidate.get(c.candidate_id) ?? [];
-    arr.push(c.text);
-    claimsByCandidate.set(c.candidate_id, arr);
+  // 1. Batch consistency pre-computation — one LLM call per candidate with INTERNAL_UNVERIFIABLE claims
+  //    instead of n calls (one per claim). Verdicts stored in a map, pool reads from it directly.
+  const internalClaimsByCandidate = new Map<string, typeof claimedClaims>();
+  for (const claim of claimedClaims) {
+    if (claim.claim_type === "INTERNAL_UNVERIFIABLE") {
+      const arr = internalClaimsByCandidate.get(claim.candidate_id) ?? [];
+      arr.push(claim);
+      internalClaimsByCandidate.set(claim.candidate_id, arr);
+    }
+  }
+
+  type PrecomputedVerdict = { verdict: string; confidence: number; reasoning: string; model: string };
+  const batchVerdictMap = new Map<string, PrecomputedVerdict>();
+
+  for (const [, internalClaims] of internalClaimsByCandidate) {
+    const input = internalClaims.map((c, i) => ({ index: i, text: c.text }));
+    const { data: batchResult, tokens: batchTokens, model: batchModel } = await chatJSON(
+      BatchConsistencyOutputSchema,
+      BATCH_CONSISTENCY_SYSTEM,
+      makeBatchConsistencyUser(input),
+      { verdicts: [], overall_pattern: null }
+    );
+
+    totalInputTokens += batchTokens.input;
+    totalOutputTokens += batchTokens.output;
+
+    for (const v of batchResult.verdicts) {
+      const claim = internalClaims[v.index];
+      if (claim) {
+        batchVerdictMap.set(claim.id, {
+          verdict: v.verdict,
+          confidence: v.confidence,
+          reasoning: batchResult.overall_pattern
+            ? `[Pattern: ${batchResult.overall_pattern}] ${v.reasoning}`
+            : v.reasoning,
+          model: batchModel,
+        });
+      }
+    }
   }
 
   // 2. GitHub repos for candidates that have GITHUB_VERIFIABLE claims in this batch
@@ -147,20 +179,18 @@ export async function POST(
   // ── Swarm pool ───────────────────────────────────────────────────────────────
 
   const pool = pLimit(POOL_SIZE);
-  let totalInputTokens = 0;
-  let totalOutputTokens = 0;
-  let processed = 0;
-
   let lastCallAt = 0;
 
   await Promise.all(
     claimedClaims.map((claim) =>
       pool(async () => {
-        // Enforce minimum gap between Groq calls to stay under free-tier RPM
-        const now = Date.now();
-        const wait = MIN_GAP_MS - (now - lastCallAt);
-        if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-        lastCallAt = Date.now();
+        // Enforce minimum gap between LLM calls — skip for internal claims (verdict pre-computed)
+        if (claim.claim_type !== "INTERNAL_UNVERIFIABLE") {
+          const now = Date.now();
+          const wait = MIN_GAP_MS - (now - lastCallAt);
+          if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+          lastCallAt = Date.now();
+        }
 
         try {
           let result;
@@ -207,14 +237,18 @@ export async function POST(
             }
 
           } else {
-            // INTERNAL_UNVERIFIABLE — consistency check within candidate's own claims
-            const candidateClaims = claimsByCandidate.get(claim.candidate_id) ?? [];
-            result = await chatJSON(
-              VerifierOutputSchema,
-              VERIFIER_INTERNAL_SYSTEM,
-              makeVerifierInternalUser(claim.text, candidateClaims),
-              VERIFIER_FALLBACK
-            );
+            // INTERNAL_UNVERIFIABLE — verdict pre-computed in batch phase above; just read the map
+            const precomputed = batchVerdictMap.get(claim.id);
+            result = {
+              data: {
+                verdict: (precomputed?.verdict ?? "UNVERIFIABLE") as "SUSPICIOUS" | "UNVERIFIABLE",
+                confidence: precomputed?.confidence ?? 0,
+                evidence: [],
+                reasoning: precomputed?.reasoning ?? "Consistency check not run.",
+              },
+              tokens: { input: 0, output: 0 },
+              model: precomputed?.model ?? "batch",
+            };
           }
 
           const { data: verdict, tokens, model } = result;

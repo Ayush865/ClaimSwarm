@@ -141,6 +141,18 @@ export const GithubAgentOutputSchema = z.object({
   confidence: z.number().min(0).max(1),
 });
 
+export const BatchConsistencyItemSchema = z.object({
+  index: z.number().int(),
+  verdict: z.enum(["SUSPICIOUS", "UNVERIFIABLE"]),
+  confidence: z.number().min(0).max(1),
+  reasoning: z.string(),
+});
+
+export const BatchConsistencyOutputSchema = z.object({
+  verdicts: z.array(BatchConsistencyItemSchema),
+  overall_pattern: z.string().nullable().optional(),
+});
+
 // ─── API response types ───────────────────────────────────────────────────────
 
 export interface RunBatchResponse {

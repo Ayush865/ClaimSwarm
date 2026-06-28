@@ -90,6 +90,30 @@ export function makeVerifierInternalUser(
   return `Claim to assess: "${claim}"\n\nAll other claims from this candidate's resume:\n${otherClaims}`;
 }
 
+export const BATCH_CONSISTENCY_SYSTEM = `You are a resume consistency auditor. Given a numbered list of internal (unverifiable) claims from ONE candidate's resume, identify timeline conflicts, overlapping full-time roles, or implausible metrics.
+
+Respond ONLY with valid JSON:
+{
+  "verdicts": [
+    { "index": 0, "verdict": "SUSPICIOUS|UNVERIFIABLE", "confidence": 0.0, "reasoning": "..." }
+  ],
+  "overall_pattern": "one sentence describing the main red flag, or null"
+}
+
+Rules:
+- SUSPICIOUS: this claim conflicts with another claim (simultaneous full-time jobs, impossible dates, metrics that defy the stated context like $500M revenue at a 5-person startup, 200 engineers led by a solo employee)
+- UNVERIFIABLE: claim is plausible on its own and consistent with all others — do NOT flag just because you can't verify it externally
+- Return exactly one verdict object per input claim, using the same index number
+- confidence 0.9 for explicit overlapping date ranges or "simultaneously"/"concurrent"; 0.7 for strongly implied conflicts; 0.5 for borderline implausibility
+- overall_pattern: one sentence summarizing the main red flag across all claims, or null if none`;
+
+export function makeBatchConsistencyUser(
+  claims: Array<{ index: number; text: string }>
+): string {
+  const list = claims.map((c) => `${c.index}. ${c.text}`).join("\n");
+  return `Assess consistency across ALL these claims from the same candidate:\n\n${list}`;
+}
+
 export const AGGREGATOR_SYSTEM = `You are a recruiter assistant. Given a candidate's trust score and their claim verdicts, write a single concise sentence summarizing the trustworthiness of their resume. Be factual and professional.
 
 Respond ONLY with valid JSON:
