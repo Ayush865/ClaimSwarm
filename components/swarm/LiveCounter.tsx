@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 
 interface LiveCounterProps {
   claimsDone: number;
+  activeAgents: number;
   totalClaims: number;
   costUsd: number;
   isRunning: boolean;
@@ -48,7 +49,7 @@ function Metric({ label, value, accent, pulse }: MetricProps) {
   );
 }
 
-export function LiveCounter({ claimsDone, totalClaims, costUsd, isRunning, startedAt }: LiveCounterProps) {
+export function LiveCounter({ claimsDone, activeAgents, totalClaims, costUsd, isRunning, startedAt }: LiveCounterProps) {
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
@@ -64,8 +65,8 @@ export function LiveCounter({ claimsDone, totalClaims, costUsd, isRunning, start
   return (
     <div className="flex flex-wrap items-center gap-4 px-4 py-2.5 bg-slate-900/80 border border-slate-800 rounded-lg backdrop-blur-sm">
       <Metric
-        label="agents dispatched"
-        value={claimsDone.toString()}
+        label="agents active"
+        value={activeAgents.toString()}
         accent
         pulse={isRunning}
       />

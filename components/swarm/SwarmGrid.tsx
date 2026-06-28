@@ -23,6 +23,7 @@ export function SwarmGrid({ jobId, initialClaims, initialJob }: SwarmGridProps) 
   const [job, setJob] = useState<Job>(initialJob);
   const [isRunning, setIsRunning] = useState(false);
   const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [accumulatedCost, setAccumulatedCost] = useState(0);
   const driverRef = useRef<AbortController | null>(null);
 
   // Subscribe to Realtime for this job
@@ -60,6 +61,7 @@ export function SwarmGrid({ jobId, initialClaims, initialJob }: SwarmGridProps) 
     if (isRunning) return;
     setIsRunning(true);
     setStartedAt(Date.now());
+    setAccumulatedCost(0);
 
     const ctrl = new AbortController();
     driverRef.current = ctrl;
@@ -76,6 +78,7 @@ export function SwarmGrid({ jobId, initialClaims, initialJob }: SwarmGridProps) 
         if (!resp.ok) break;
         const data = await resp.json();
         remaining = data.remaining ?? 0;
+        if (data.costUsd) setAccumulatedCost((prev) => prev + data.costUsd);
 
         if (remaining === 0) break;
       }
@@ -100,6 +103,7 @@ export function SwarmGrid({ jobId, initialClaims, initialJob }: SwarmGridProps) 
 
   const claimList = Array.from(claims.values());
   const pendingCount = claimList.filter((c) => c.status === "pending").length;
+  const runningCount = claimList.filter((c) => c.status === "running").length;
   const doneCount = claimList.filter((c) => c.status === "done" || c.status === "error").length;
 
   // Verdict legend
@@ -120,9 +124,10 @@ export function SwarmGrid({ jobId, initialClaims, initialJob }: SwarmGridProps) 
       <div className="space-y-4">
         {/* Counter bar */}
         <LiveCounter
-          claimsDone={job.claims_done}
+          claimsDone={doneCount}
+          activeAgents={runningCount}
           totalClaims={job.total_claims}
-          costUsd={Number(job.cost_usd)}
+          costUsd={isRunning ? accumulatedCost : Number(job.cost_usd)}
           isRunning={isRunning}
           startedAt={startedAt}
         />
