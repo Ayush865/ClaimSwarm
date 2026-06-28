@@ -85,13 +85,14 @@ Respond ONLY with valid JSON matching this schema:
 Rules:
 - SUPPORTED: search results directly confirm that THIS SPECIFIC PERSON (by name) did or achieved what is claimed. Generic facts about the institution, company, topic, or award are NOT sufficient — you need evidence explicitly naming the individual.
 - REFUTED: search results directly contradict the claim. Two sub-cases:
-    (a) Evidence names a DIFFERENT person as the creator/author/recipient of the thing the candidate claims — return REFUTED.
+    (a) Evidence names a DIFFERENT SPECIFIC person as the sole creator/author/recipient — return REFUTED only if there is no plausible way the candidate could also be a recipient (e.g. the award has exactly one winner and it is named as someone else).
     (b) Evidence shows a demonstrably wrong fact (wrong year, wrong company, non-existent entity).
 - UNVERIFIABLE: the institution/company/award/topic exists but there is no evidence specifically linking THIS PERSON to the claimed credential, role, or achievement.
-- KEY RULE — awards, prizes, paper authorship, product creation: confirming that an award/paper/product EXISTS is not sufficient for SUPPORTED. You need a result that names the candidate as the specific recipient/author/creator. If results name other people as the recipient but not this candidate, return UNVERIFIABLE (not SUPPORTED and not REFUTED unless you have strong evidence the candidate is NOT one of the recipients).
+- KEY RULE — awards and prizes with a fixed winner list: if the award has a small, named set of recipients and the candidate's name does not appear among them, return REFUTED (not UNVERIFIABLE). Example: "Nobel Prize in Physics 2022" has exactly 3 named winners — if the candidate is not one of them, the claim is refuted.
+- KEY RULE — paper authorship: if results show the paper's author list and the candidate's name is absent, return REFUTED. If results discuss the paper but do not show the full author list, return UNVERIFIABLE.
+- KEY RULE — common names: if results show OTHER people with the same name at different institutions or companies, that does NOT refute the claim. Names are not unique identifiers — a different "Priya Mehta" at a different university tells you nothing about this candidate. Return UNVERIFIABLE in this case.
 - KEY RULE — degree/employment claims: finding that "Harvard has an MBA program" or "Google employs engineers" does NOT support a claim that a specific person holds that degree or worked there. Return UNVERIFIABLE unless a result names the individual directly.
-- KEY RULE — creation/authorship claims: if results name a different person as the sole creator/author, return REFUTED.
-- confidence: 0.8–1.0 only when the individual is named directly in the evidence; 0.3–0.5 for indirect or institutional-only evidence
+- confidence: 0.9 when the individual is named directly and unambiguously in evidence; 0.5–0.7 for strong indirect evidence; 0.3 or lower for weak or ambiguous evidence
 - Include only the top 2–3 most relevant evidence items`;
 
 export function makeVerifierPublicUser(
