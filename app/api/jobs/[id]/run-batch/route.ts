@@ -10,9 +10,8 @@ import pLimit from "p-limit";
 
 export const maxDuration = 60;
 
-const BATCH_SIZE = Number(process.env.SWARM_BATCH_SIZE ?? 10);
-const POOL_SIZE  = Number(process.env.SWARM_POOL ?? 1);
-const MIN_GAP_MS = Number(process.env.SWARM_GAP_MS ?? 13000);
+const BATCH_SIZE = Number(process.env.SWARM_BATCH_SIZE ?? 5);
+const POOL_SIZE  = Number(process.env.SWARM_POOL ?? 4);
 
 interface GithubRepo {
   name: string;
@@ -182,10 +181,11 @@ export async function POST(
     }
   }
 
-  // ── Swarm pool — one orchestrator call per claim ──────────────────────────
+  // ── Swarm pool — claims run in parallel up to POOL_SIZE ──────────────────
+  // No serial gap gate — 429s are handled by callWithRetry (parses retry-after)
+  // and Gemini fallback in chatJSON. Pool size is the only concurrency control.
 
   const pool = pLimit(POOL_SIZE);
-  let lastCallAt = 0;
   let totalInputTokens  = batchInputTokens;
   let totalOutputTokens = batchOutputTokens;
   let totalCostUsd      = computeCost(batchInputTokens, batchOutputTokens).costUsd;
@@ -194,13 +194,6 @@ export async function POST(
   await Promise.all(
     claimedClaims.map((claim) =>
       pool(async () => {
-        // Rate-limit gap only needed for external claims (internal reads from map)
-        if (claim.claim_type !== "INTERNAL_UNVERIFIABLE") {
-          const now = Date.now();
-          const wait = MIN_GAP_MS - (now - lastCallAt);
-          if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-          lastCallAt = Date.now();
-        }
 
         try {
           const result = await orchestrateClaim({
