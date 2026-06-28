@@ -105,10 +105,11 @@ async function runWebPipeline(claimText: string, candidateName?: string): Promis
   const searchResults = await search(qw.query);
 
   // Step 3 — Web Verifier (reasoning): critically evaluate the search results
+  // candidateName is passed so the model can match names in evidence against the candidate
   const { data: v, tokens: vTokens, model: vModel } = await chatJSON(
     VerifierOutputSchema,
     VERIFIER_PUBLIC_SYSTEM,
-    makeVerifierPublicUser(claimText, searchResults),
+    makeVerifierPublicUser(claimText, searchResults, candidateName),
     VERIFIER_FALLBACK,
     30000,
     "reasoning"

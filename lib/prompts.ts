@@ -97,12 +97,16 @@ Rules:
 
 export function makeVerifierPublicUser(
   claim: string,
-  searchResults: Array<{ snippet: string; url: string; title: string; source: string }>
+  searchResults: Array<{ snippet: string; url: string; title: string; source: string }>,
+  candidateName?: string
 ): string {
   const snippets = searchResults
     .map((r, i) => `[${i + 1}] ${r.title}\nURL: ${r.url}\n${r.snippet}`)
     .join("\n\n");
-  return `Claim to verify: "${claim}"\n\nSearch results:\n${snippets || "No results found."}`;
+  const nameHint = candidateName
+    ? `\nCandidate's full name: "${candidateName}" — use this to match against names in the search results.\n`
+    : "";
+  return `Claim to verify: "${claim}"${nameHint}\n\nSearch results:\n${snippets || "No results found."}`;
 }
 
 export const VERIFIER_INTERNAL_SYSTEM = `You are a resume consistency checker. Given a claim and the candidate's full list of claims, identify timeline conflicts, overlapping full-time roles, or logically impossible metrics.
@@ -209,10 +213,11 @@ Respond ONLY with valid JSON matching this schema:
 
 Rules:
 - SUPPORTED: one or more repos directly corroborate the claim (repo name, description, stars, topics, or language match what is claimed)
-- REFUTED: the repos contradict the claim — e.g., the claimed repo does not exist under this account, or the account clearly does not own the project they claim to have created
-- UNVERIFIABLE: repos exist but none clearly relate to the specific claim
+- REFUTED: only when a repo provides positive evidence AGAINST the claim — e.g., a repo's description or commit history explicitly credits a different person as the sole creator of something the candidate claims to have created
+- UNVERIFIABLE: the claimed repo is not in this list, or no repos clearly relate to the claim — this is the correct verdict when evidence is absent or ambiguous
+- CRITICAL: a missing repo is NOT grounds for REFUTED. Large open-source projects almost always live under GitHub organization accounts (e.g. rails/rails, facebook/create-react-app, vuejs/vue), not the creator's personal account. The absence of a repo from the user's personal list tells you nothing — return UNVERIFIABLE, not REFUTED.
 - For each relevant repo construct the evidence URL as: https://github.com/{owner}/{repo_name}
-- confidence: 0.9 if the repo name or description exactly matches the claim; 0.6 if indirect; 0.3 if speculative`;
+- confidence: 0.9 if a repo name or description exactly matches and directly corroborates; 0.6 if indirect; 0.3 if speculative`;
 
 export function makeGithubVerifierUser(
   claim: string,
