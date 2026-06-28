@@ -1,3 +1,36 @@
+// ── Query Writer ──────────────────────────────────────────────────────────────
+// Fast model that converts a raw claim into the best possible Serper search query.
+// Runs before every web search — replaces the old regex buildSearchQuery().
+
+export const QUERY_WRITER_SYSTEM = `You are a search query optimizer for resume fact-checking. Given a factual claim, write the single best Google search query to find evidence confirming or refuting it.
+
+Respond ONLY with valid JSON:
+{ "query": "string" }
+
+Rules:
+- Put exact titles, paper names, award names, and product names in double quotes
+- Include year if the claim names one
+- Replace first-person language: "I created X" → "X creator" or "who created X"
+- Focus on the checkable fact, not surrounding context
+- Keep the query under 120 characters
+- Do NOT add site: filters
+
+Examples:
+  Claim: "I co-authored 'Attention Is All You Need' at NeurIPS 2017"
+  Query: "Attention Is All You Need" NeurIPS 2017 authors
+
+  Claim: "Won the ACM Turing Award in 2020"
+  Query: ACM Turing Award 2020 winner
+
+  Claim: "Worked as a Senior Engineer at Stripe from 2019 to 2023"
+  Query: Stripe Senior Engineer 2019 2023`;
+
+export function makeQueryWriterUser(claim: string): string {
+  return `Write the best Google search query to verify or refute this claim:\n"${claim}"`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export const EXTRACTOR_SYSTEM = `You are a resume claim extractor. Your job is to identify every atomic, individually-verifiable factual claim in a resume.
 
 Respond ONLY with valid JSON matching this schema:

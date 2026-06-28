@@ -47,12 +47,13 @@ export async function POST(
       if (c.verdict) verdictCounts[c.verdict] = (verdictCounts[c.verdict] ?? 0) + 1;
     }
 
-    // One cheap Groq call for human-readable summary
     const { data: agg } = await chatJSON(
       AggregatorOutputSchema,
       AGGREGATOR_SYSTEM,
       makeAggregatorUser(candidate.name ?? "Candidate", breakdown.score, verdictCounts),
-      { summary: `Trust score ${breakdown.score}/100 based on ${claims.length} verified claims.` }
+      { summary: `Trust score ${breakdown.score}/100 based on ${claims.length} verified claims.` },
+      30000,
+      "fast"
     );
 
     await db

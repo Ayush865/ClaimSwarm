@@ -180,7 +180,9 @@ async function handleUpload(
       ExtractorOutputSchema,
       EXTRACTOR_SYSTEM,
       makeExtractorUser(rawText),
-      fallback
+      fallback,
+      30000,
+      "balanced"
     );
 
     const { data: extracted } = result;

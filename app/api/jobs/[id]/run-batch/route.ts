@@ -2,33 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { createServerClient } from "@/lib/supabaseServer";
 import { chatJSON } from "@/lib/groq";
-import { search } from "@/lib/serper";
 import { computeCost } from "@/lib/cost";
-import {
-  VERIFIER_PUBLIC_SYSTEM,
-  GITHUB_VERIFIER_SYSTEM,
-  BATCH_CONSISTENCY_SYSTEM,
-  makeVerifierPublicUser,
-  makeGithubVerifierUser,
-  makeBatchConsistencyUser,
-} from "@/lib/prompts";
-import { VerifierOutputSchema, BatchConsistencyOutputSchema } from "@/lib/types";
+import { BATCH_CONSISTENCY_SYSTEM, makeBatchConsistencyUser } from "@/lib/prompts";
+import { BatchConsistencyOutputSchema } from "@/lib/types";
+import { orchestrateClaim, type RepoData } from "@/lib/orchestrator";
 import pLimit from "p-limit";
 
 export const maxDuration = 60;
 
-// Groq free tier: 6000 TPM, ~1100 tokens/request → max 5 req/min → 12s gap minimum.
-// Using 13s to stay comfortably under. Override with env vars on paid tiers.
 const BATCH_SIZE = Number(process.env.SWARM_BATCH_SIZE ?? 10);
-const POOL_SIZE = Number(process.env.SWARM_POOL ?? 1);
+const POOL_SIZE  = Number(process.env.SWARM_POOL ?? 1);
 const MIN_GAP_MS = Number(process.env.SWARM_GAP_MS ?? 13000);
-
-const VERIFIER_FALLBACK = {
-  verdict: "UNVERIFIABLE" as const,
-  confidence: 0,
-  evidence: [],
-  reasoning: "Agent failed to produce a verdict.",
-};
 
 interface GithubRepo {
   name: string;
@@ -57,6 +41,18 @@ async function fetchGithubRepos(handle: string): Promise<GithubRepo[]> {
   } catch {
     return [];
   }
+}
+
+function toRepoData(r: GithubRepo): RepoData {
+  return {
+    name: r.name,
+    description: r.description,
+    language: r.language,
+    stars: r.stargazers_count,
+    forks: r.forks_count,
+    topics: r.topics ?? [],
+    owner_login: r.owner.login,
+  };
 }
 
 export async function POST(
@@ -103,14 +99,44 @@ export async function POST(
     return NextResponse.json({ processed: 0, remaining: count ?? 0, costUsd: 0 });
   }
 
-  // ── Pre-load per-candidate context ──────────────────────────────────────────
+  // ── Pre-load context (done once per batch, not per claim) ─────────────────
 
-  let totalInputTokens = 0;
-  let totalOutputTokens = 0;
-  let processed = 0;
+  // 1. All claim texts grouped by candidate (for the internal consistency check)
+  const { data: allJobClaims } = await db
+    .from("claims")
+    .select("text, candidate_id")
+    .eq("job_id", jobId);
 
-  // 1. Batch consistency pre-computation — one LLM call per candidate with INTERNAL_UNVERIFIABLE claims
-  //    instead of n calls (one per claim). Verdicts stored in a map, pool reads from it directly.
+  const allClaimsByCandidate = new Map<string, string[]>();
+  for (const c of allJobClaims ?? []) {
+    const arr = allClaimsByCandidate.get(c.candidate_id) ?? [];
+    arr.push(c.text);
+    allClaimsByCandidate.set(c.candidate_id, arr);
+  }
+
+  // 2. GitHub repos — pre-load for every candidate in this batch that has a handle.
+  //    Both PUBLIC_VERIFIABLE and GITHUB_VERIFIABLE claims use GitHub when available.
+  const candidateIdsInBatch = [...new Set(claimedClaims.map((c) => c.candidate_id))];
+
+  const { data: candidateRows } = await db
+    .from("candidates")
+    .select("id, github_handle")
+    .in("id", candidateIdsInBatch);
+
+  const reposByCandidate = new Map<string, RepoData[]>();
+  const handleByCandidate = new Map<string, string>();
+
+  await Promise.all(
+    (candidateRows ?? []).map(async (cand) => {
+      if (!cand.github_handle) return;
+      handleByCandidate.set(cand.id, cand.github_handle);
+      const repos = await fetchGithubRepos(cand.github_handle);
+      reposByCandidate.set(cand.id, repos.map(toRepoData));
+    })
+  );
+
+  // 3. Batch consistency check — one LLM call per candidate with INTERNAL claims
+  //    (more efficient and accurate than one call per internal claim)
   const internalClaimsByCandidate = new Map<string, typeof claimedClaims>();
   for (const claim of claimedClaims) {
     if (claim.claim_type === "INTERNAL_UNVERIFIABLE") {
@@ -122,69 +148,51 @@ export async function POST(
 
   type PrecomputedVerdict = { verdict: string; confidence: number; reasoning: string; model: string };
   const batchVerdictMap = new Map<string, PrecomputedVerdict>();
+  let batchInputTokens = 0;
+  let batchOutputTokens = 0;
 
   for (const [, internalClaims] of internalClaimsByCandidate) {
     const input = internalClaims.map((c, i) => ({ index: i, text: c.text }));
-    const { data: batchResult, tokens: batchTokens, model: batchModel } = await chatJSON(
+    const { data: result, tokens, model } = await chatJSON(
       BatchConsistencyOutputSchema,
       BATCH_CONSISTENCY_SYSTEM,
       makeBatchConsistencyUser(input),
-      { verdicts: [], overall_pattern: null }
+      { verdicts: [], overall_pattern: null },
+      30000,
+      "reasoning"
     );
 
-    totalInputTokens += batchTokens.input;
-    totalOutputTokens += batchTokens.output;
+    batchInputTokens  += tokens.input;
+    batchOutputTokens += tokens.output;
 
-    for (const v of batchResult.verdicts) {
+    for (const v of result.verdicts) {
       const claim = internalClaims[v.index];
       if (claim) {
         batchVerdictMap.set(claim.id, {
           verdict: v.verdict,
           confidence: v.confidence,
-          reasoning: batchResult.overall_pattern
-            ? `[Pattern: ${batchResult.overall_pattern}] ${v.reasoning}`
+          reasoning: result.overall_pattern
+            ? `[Pattern: ${result.overall_pattern}] ${v.reasoning}`
             : v.reasoning,
-          model: batchModel,
+          model,
         });
       }
     }
   }
 
-  // 2. GitHub repos for candidates that have GITHUB_VERIFIABLE claims in this batch
-  const githubCandidateIds = new Set(
-    claimedClaims
-      .filter((c) => c.claim_type === "GITHUB_VERIFIABLE")
-      .map((c) => c.candidate_id)
-  );
-
-  const reposByCandidate = new Map<string, GithubRepo[]>();
-  const handleByCandidate = new Map<string, string>();
-
-  if (githubCandidateIds.size > 0) {
-    const { data: candidateRows } = await db
-      .from("candidates")
-      .select("id, github_handle")
-      .in("id", [...githubCandidateIds]);
-
-    await Promise.all(
-      (candidateRows ?? []).map(async (cand) => {
-        if (!cand.github_handle) return;
-        handleByCandidate.set(cand.id, cand.github_handle);
-        const repos = await fetchGithubRepos(cand.github_handle);
-        reposByCandidate.set(cand.id, repos);
-      })
-    );
-  }
-
-  // ── Swarm pool ───────────────────────────────────────────────────────────────
+  // ── Swarm pool — one orchestrator call per claim ──────────────────────────
 
   const pool = pLimit(POOL_SIZE);
   let lastCallAt = 0;
+  let totalInputTokens  = batchInputTokens;
+  let totalOutputTokens = batchOutputTokens;
+  let totalCostUsd      = computeCost(batchInputTokens, batchOutputTokens).costUsd;
+  let processed = 0;
 
   await Promise.all(
     claimedClaims.map((claim) =>
       pool(async () => {
-        // Enforce minimum gap between LLM calls — skip for internal claims (verdict pre-computed)
+        // Rate-limit gap only needed for external claims (internal reads from map)
         if (claim.claim_type !== "INTERNAL_UNVERIFIABLE") {
           const now = Date.now();
           const wait = MIN_GAP_MS - (now - lastCallAt);
@@ -193,88 +201,31 @@ export async function POST(
         }
 
         try {
-          let result;
-
-          if (claim.claim_type === "PUBLIC_VERIFIABLE") {
-            const searchResults = await search(buildSearchQuery(claim.text));
-            result = await chatJSON(
-              VerifierOutputSchema,
-              VERIFIER_PUBLIC_SYSTEM,
-              makeVerifierPublicUser(claim.text, searchResults),
-              VERIFIER_FALLBACK
-            );
-
-          } else if (claim.claim_type === "GITHUB_VERIFIABLE") {
-            const repos = reposByCandidate.get(claim.candidate_id) ?? [];
-            const handle = handleByCandidate.get(claim.candidate_id);
-
-            if (repos.length > 0 && handle) {
-              // Run GitHub agent
-              const repoData = repos.map((r) => ({
-                name: r.name,
-                description: r.description,
-                language: r.language,
-                stars: r.stargazers_count,
-                forks: r.forks_count,
-                topics: r.topics ?? [],
-                owner_login: r.owner.login,
-              }));
-              result = await chatJSON(
-                VerifierOutputSchema,
-                GITHUB_VERIFIER_SYSTEM,
-                makeGithubVerifierUser(claim.text, handle, repoData),
-                VERIFIER_FALLBACK
-              );
-            } else {
-              // No GitHub handle — fall back to web search
-              const searchResults = await search(buildSearchQuery(claim.text));
-              result = await chatJSON(
-                VerifierOutputSchema,
-                VERIFIER_PUBLIC_SYSTEM,
-                makeVerifierPublicUser(claim.text, searchResults),
-                VERIFIER_FALLBACK
-              );
-            }
-
-          } else {
-            // INTERNAL_UNVERIFIABLE — verdict pre-computed in batch phase above; just read the map
-            const precomputed = batchVerdictMap.get(claim.id);
-            result = {
-              data: {
-                verdict: (precomputed?.verdict ?? "UNVERIFIABLE") as "SUSPICIOUS" | "UNVERIFIABLE",
-                confidence: precomputed?.confidence ?? 0,
-                evidence: [],
-                reasoning: precomputed?.reasoning ?? "Consistency check not run.",
-              },
-              tokens: { input: 0, output: 0 },
-              model: precomputed?.model ?? "batch",
-            };
-          }
-
-          const { data: verdict, tokens, model } = result;
-
-          // Internal claims can only be SUSPICIOUS or UNVERIFIABLE
-          if (claim.claim_type === "INTERNAL_UNVERIFIABLE") {
-            if (verdict.verdict === "SUPPORTED" || verdict.verdict === "REFUTED") {
-              verdict.verdict = "UNVERIFIABLE";
-            }
-          }
+          const result = await orchestrateClaim({
+            claimText: claim.text,
+            claimType: claim.claim_type,
+            allCandidateClaims: allClaimsByCandidate.get(claim.candidate_id) ?? [],
+            githubHandle: handleByCandidate.get(claim.candidate_id) ?? null,
+            githubRepos: reposByCandidate.get(claim.candidate_id),
+            precomputedVerdict: batchVerdictMap.get(claim.id) ?? null,
+          });
 
           await db
             .from("claims")
             .update({
               status: "done",
-              verdict: verdict.verdict,
-              confidence: verdict.confidence,
-              reasoning: verdict.reasoning,
-              evidence: verdict.evidence,
-              model,
-              tokens: tokens.input + tokens.output,
+              verdict: result.verdict,
+              confidence: result.confidence,
+              reasoning: result.reasoning,
+              evidence: result.evidence,
+              model: result.model,
+              tokens: result.totalTokens.input + result.totalTokens.output,
             })
             .eq("id", claim.id);
 
-          totalInputTokens += tokens.input;
-          totalOutputTokens += tokens.output;
+          totalInputTokens  += result.totalTokens.input;
+          totalOutputTokens += result.totalTokens.output;
+          totalCostUsd      += result.costUsd;
           processed++;
         } catch (err) {
           console.error(`Claim ${claim.id} failed:`, err);
@@ -284,21 +235,21 @@ export async function POST(
     )
   );
 
-  const { costUsd, tokens: totalTokens } = computeCost(totalInputTokens, totalOutputTokens);
+  const totalTokens = totalInputTokens + totalOutputTokens;
 
   await db
     .from("jobs")
     .update({
-      claims_done: (job.claims_done ?? 0) + processed,
-      cost_usd: Number(job.cost_usd ?? 0) + costUsd,
-      tokens_used: Number(job.tokens_used ?? 0) + totalTokens,
+      claims_done:  (job.claims_done  ?? 0) + processed,
+      cost_usd:     Number(job.cost_usd    ?? 0) + totalCostUsd,
+      tokens_used:  Number(job.tokens_used ?? 0) + totalTokens,
     })
     .eq("id", jobId);
 
   await db.from("metrics").insert({
     job_id: jobId,
-    claims_done: (job.claims_done ?? 0) + processed,
-    cost_usd: Number(job.cost_usd ?? 0) + costUsd,
+    claims_done:   (job.claims_done ?? 0) + processed,
+    cost_usd:      Number(job.cost_usd ?? 0) + totalCostUsd,
     active_agents: processed,
   });
 
@@ -308,12 +259,5 @@ export async function POST(
     .eq("job_id", jobId)
     .eq("status", "pending");
 
-  return NextResponse.json({ processed, remaining: remaining ?? 0, costUsd });
-}
-
-function buildSearchQuery(claimText: string): string {
-  return claimText
-    .replace(/^(I|we|my team)\s+/i, "")
-    .replace(/\b(approximately|about|around|over|more than)\b/gi, "")
-    .slice(0, 120);
+  return NextResponse.json({ processed, remaining: remaining ?? 0, costUsd: totalCostUsd });
 }

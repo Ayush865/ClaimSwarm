@@ -90,6 +90,10 @@ export interface GithubEvidence {
 
 // ─── Zod schemas for agent outputs ───────────────────────────────────────────
 
+export const QueryWriterOutputSchema = z.object({
+  query: z.string().min(3).max(150),
+});
+
 export const ExtractedClaimSchema = z.object({
   text: z.string().min(5),
   claim_type: z.enum(["PUBLIC_VERIFIABLE", "INTERNAL_UNVERIFIABLE", "GITHUB_VERIFIABLE"]),

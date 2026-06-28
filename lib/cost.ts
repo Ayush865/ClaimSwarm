@@ -1,11 +1,32 @@
-// llama-3.1-8b-instant pricing (Jun 2026)
-const PRICE_INPUT_PER_M = 0.05;
-const PRICE_OUTPUT_PER_M = 0.08;
+// Approximate pricing per 1M tokens (Jun 2026).
+// Keys are provider model IDs — substring-match is used so "70b" catches any 70B variant.
+const PRICING_TABLE: Array<{ match: string; input: number; output: number }> = [
+  // DeepSeek
+  { match: "deepseek-reasoner", input: 0.55,  output: 2.19 },
+  { match: "deepseek-chat",     input: 0.07,  output: 0.28 },
+  // Llama 3.x 405B
+  { match: "405b",              input: 1.79,  output: 1.79 },
+  // Llama 3.x 70B (Groq versatile / NVIDIA NIM)
+  { match: "70b",               input: 0.59,  output: 0.79 },
+  // Llama 3.x 8B (Groq instant / NVIDIA NIM)
+  { match: "8b",                input: 0.05,  output: 0.08 },
+];
 
-export function computeCost(inputTokens: number, outputTokens: number) {
+const DEFAULT_PRICING = { input: 0.05, output: 0.08 };
+
+function getPricing(model: string): { input: number; output: number } {
+  const lower = model.toLowerCase();
+  for (const entry of PRICING_TABLE) {
+    if (lower.includes(entry.match)) return entry;
+  }
+  return DEFAULT_PRICING;
+}
+
+export function computeCost(inputTokens: number, outputTokens: number, model = "") {
+  const { input, output } = getPricing(model);
   const costUsd =
-    (inputTokens / 1_000_000) * PRICE_INPUT_PER_M +
-    (outputTokens / 1_000_000) * PRICE_OUTPUT_PER_M;
+    (inputTokens / 1_000_000) * input +
+    (outputTokens / 1_000_000) * output;
   return {
     costUsd,
     tokens: inputTokens + outputTokens,

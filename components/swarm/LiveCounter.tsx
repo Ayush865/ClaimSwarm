@@ -52,12 +52,12 @@ export function LiveCounter({ claimsDone, totalClaims, costUsd, isRunning, start
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
-    if (!startedAt) return;
+    if (!startedAt || !isRunning) return;
     const interval = setInterval(() => {
       setElapsed(Date.now() - startedAt);
     }, 1000);
     return () => clearInterval(interval);
-  }, [startedAt]);
+  }, [startedAt, isRunning]);
 
   const pct = totalClaims > 0 ? Math.round((claimsDone / totalClaims) * 100) : 0;
 
