@@ -120,14 +120,16 @@ export async function POST(
 
   const { data: candidateRows } = await db
     .from("candidates")
-    .select("id, github_handle")
+    .select("id, name, github_handle")
     .in("id", candidateIdsInBatch);
 
   const reposByCandidate = new Map<string, RepoData[]>();
   const handleByCandidate = new Map<string, string>();
+  const nameByCandidate = new Map<string, string>();
 
   await Promise.all(
     (candidateRows ?? []).map(async (cand) => {
+      if (cand.name) nameByCandidate.set(cand.id, cand.name);
       if (!cand.github_handle) return;
       handleByCandidate.set(cand.id, cand.github_handle);
       const repos = await fetchGithubRepos(cand.github_handle);
@@ -204,6 +206,7 @@ export async function POST(
           const result = await orchestrateClaim({
             claimText: claim.text,
             claimType: claim.claim_type,
+            candidateName: nameByCandidate.get(claim.candidate_id),
             allCandidateClaims: allClaimsByCandidate.get(claim.candidate_id) ?? [],
             githubHandle: handleByCandidate.get(claim.candidate_id) ?? null,
             githubRepos: reposByCandidate.get(claim.candidate_id),

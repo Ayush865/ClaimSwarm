@@ -2,31 +2,39 @@
 // Fast model that converts a raw claim into the best possible Serper search query.
 // Runs before every web search — replaces the old regex buildSearchQuery().
 
-export const QUERY_WRITER_SYSTEM = `You are a search query optimizer for resume fact-checking. Given a factual claim, write the single best Google search query to find evidence confirming or refuting it.
+export const QUERY_WRITER_SYSTEM = `You are a search query optimizer for resume fact-checking. Given a factual claim and the candidate's name, write the single best Google search query to find evidence confirming or refuting it.
 
 Respond ONLY with valid JSON:
 { "query": "string" }
 
 Rules:
-- Put exact titles, paper names, award names, and product names in double quotes
-- Include year if the claim names one
-- Replace first-person language: "I created X" → "X creator" or "who created X"
-- Focus on the checkable fact, not surrounding context
-- Keep the query under 120 characters
-- Do NOT add site: filters
+- CRITICAL — awards, prizes, honors, paper authorship, product creation: you MUST include the candidate's full name in the query. The goal is to find evidence that THIS SPECIFIC PERSON achieved the thing, not just that the thing exists. Without the name, you would find that the Turing Award exists but not who this person won it.
+- For employment, education, or general skills claims: the candidate name is optional — focus on verifiable institutional facts instead.
+- Put exact award names, paper titles, and product names in double quotes.
+- Include year if the claim names one.
+- Replace first-person language: "I created X" → candidate name + "created X".
+- Keep the query under 120 characters.
+- Do NOT add site: filters.
 
 Examples:
-  Claim: "I co-authored 'Attention Is All You Need' at NeurIPS 2017"
-  Query: "Attention Is All You Need" NeurIPS 2017 authors
+  Claim: "Won the ACM Turing Award in 2020" (candidate: Jane Smith)
+  Query: "Jane Smith" "ACM Turing Award" 2020
 
-  Claim: "Won the ACM Turing Award in 2020"
-  Query: ACM Turing Award 2020 winner
+  Claim: "Co-authored 'Attention Is All You Need' at NeurIPS 2017" (candidate: John Doe)
+  Query: "John Doe" "Attention Is All You Need" NeurIPS 2017 author
 
-  Claim: "Worked as a Senior Engineer at Stripe from 2019 to 2023"
+  Claim: "Won the Nobel Prize in Physics 2022" (candidate: Maria Garcia)
+  Query: "Maria Garcia" "Nobel Prize" Physics 2022
+
+  Claim: "Co-created Create React App at Facebook" (candidate: Alex Rivera)
+  Query: "Alex Rivera" "Create React App" creator Facebook
+
+  Claim: "Worked as Senior Engineer at Stripe from 2019 to 2023" (candidate: any)
   Query: Stripe Senior Engineer 2019 2023`;
 
-export function makeQueryWriterUser(claim: string): string {
-  return `Write the best Google search query to verify or refute this claim:\n"${claim}"`;
+export function makeQueryWriterUser(claim: string, candidateName?: string): string {
+  const nameHint = candidateName ? `\nCandidate's full name: "${candidateName}"` : "";
+  return `Write the best Google search query to verify or refute this claim:\n"${claim}"${nameHint}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -75,11 +83,14 @@ Respond ONLY with valid JSON matching this schema:
 }
 
 Rules:
-- SUPPORTED: search results directly confirm that THIS SPECIFIC PERSON did or achieved what is claimed. Generic facts about the institution, company, or topic are NOT sufficient — you need evidence naming the specific individual.
-- REFUTED: search results contradict the claim — e.g., evidence shows a different person created something the candidate claims to have created, or the claim contains a demonstrably wrong fact.
-- UNVERIFIABLE: the institution/company/topic exists but there is no evidence specifically linking THIS PERSON to the claimed credential, role, or achievement. This is the correct verdict for most degree claims, employment claims, and private-sector achievements where only institutional facts (not the individual's record) appear in search results.
+- SUPPORTED: search results directly confirm that THIS SPECIFIC PERSON (by name) did or achieved what is claimed. Generic facts about the institution, company, topic, or award are NOT sufficient — you need evidence explicitly naming the individual.
+- REFUTED: search results directly contradict the claim. Two sub-cases:
+    (a) Evidence names a DIFFERENT person as the creator/author/recipient of the thing the candidate claims — return REFUTED.
+    (b) Evidence shows a demonstrably wrong fact (wrong year, wrong company, non-existent entity).
+- UNVERIFIABLE: the institution/company/award/topic exists but there is no evidence specifically linking THIS PERSON to the claimed credential, role, or achievement.
+- KEY RULE — awards, prizes, paper authorship, product creation: confirming that an award/paper/product EXISTS is not sufficient for SUPPORTED. You need a result that names the candidate as the specific recipient/author/creator. If results name other people as the recipient but not this candidate, return UNVERIFIABLE (not SUPPORTED and not REFUTED unless you have strong evidence the candidate is NOT one of the recipients).
 - KEY RULE — degree/employment claims: finding that "Harvard has an MBA program" or "Google employs engineers" does NOT support a claim that a specific person holds that degree or worked there. Return UNVERIFIABLE unless a result names the individual directly.
-- KEY RULE — creation/authorship claims: if results name a different person as the creator/author, return REFUTED, not UNVERIFIABLE.
+- KEY RULE — creation/authorship claims: if results name a different person as the sole creator/author, return REFUTED.
 - confidence: 0.8–1.0 only when the individual is named directly in the evidence; 0.3–0.5 for indirect or institutional-only evidence
 - Include only the top 2–3 most relevant evidence items`;
 
@@ -93,7 +104,7 @@ export function makeVerifierPublicUser(
   return `Claim to verify: "${claim}"\n\nSearch results:\n${snippets || "No results found."}`;
 }
 
-export const VERIFIER_INTERNAL_SYSTEM = `You are a resume consistency checker. Given a claim and the candidate's full list of claims, identify timeline conflicts, overlapping full-time roles, or implausible metrics.
+export const VERIFIER_INTERNAL_SYSTEM = `You are a resume consistency checker. Given a claim and the candidate's full list of claims, identify timeline conflicts, overlapping full-time roles, or logically impossible metrics.
 
 Respond ONLY with valid JSON matching this schema:
 {
@@ -104,12 +115,16 @@ Respond ONLY with valid JSON matching this schema:
 }
 
 Rules:
-- SUSPICIOUS — flag any of these:
-  * Two or more simultaneous full-time roles (same date range, both labeled full-time)
-  * Metrics that defy reality for the stated context (e.g. $500M revenue at a 5-person startup in 6 months; 50M users with no marketing budget; leading 200 engineers as the only employee)
-  * Claims that directly contradict each other within the same resume
-- UNVERIFIABLE: no conflict detected; claim is plausible on its own and consistent with the other claims
-- confidence: 0.9 for explicit "simultaneously" / "concurrent" / exact overlapping date ranges; 0.7 for implied conflicts; 0.5 for borderline implausibility
+- SUSPICIOUS — flag ONLY these specific situations:
+  * Two or more simultaneous full-time roles with the same or overlapping date range
+  * A metric that is logically impossible given the stated context (e.g. $500M revenue at a 5-person startup in 6 months; leading 200 engineers as the sole employee listed; 50M users at a company founded last month)
+  * Two claims that directly and explicitly contradict each other
+- UNVERIFIABLE: claim is plausible and consistent with the other claims — return this in all other cases
+- CRITICAL — do NOT flag:
+  * Impressive but plausible metrics at large companies (e.g. "reduced costs 45% at Google", "saved $12M at AWS", "grew adoption 10x at Meta") — large companies have large budgets and experienced engineers produce real impact; these are not suspicious without specific cross-claim contradiction
+  * A single impressive number without a contradicting claim
+  * Large team sizes (30–50 engineers) at established companies — senior engineers and managers routinely lead teams this size
+- confidence: 0.9 for explicit overlapping date ranges or "simultaneously"/"concurrent"; 0.7 for strongly implied conflicts; do NOT use 0.5 or lower for SUSPICIOUS — if confidence would be below 0.7, return UNVERIFIABLE instead
 - Do NOT return UNVERIFIABLE just because you cannot verify a metric externally — the question is only internal consistency`;
 
 export function makeVerifierInternalUser(
@@ -123,7 +138,7 @@ export function makeVerifierInternalUser(
   return `Claim to assess: "${claim}"\n\nAll other claims from this candidate's resume:\n${otherClaims}`;
 }
 
-export const BATCH_CONSISTENCY_SYSTEM = `You are a resume consistency auditor. Given a numbered list of internal (unverifiable) claims from ONE candidate's resume, identify timeline conflicts, overlapping full-time roles, or implausible metrics.
+export const BATCH_CONSISTENCY_SYSTEM = `You are a resume consistency auditor. Given a numbered list of internal (unverifiable) claims from ONE candidate's resume, identify timeline conflicts, overlapping full-time roles, or logically impossible metrics.
 
 Respond ONLY with valid JSON:
 {
@@ -134,11 +149,18 @@ Respond ONLY with valid JSON:
 }
 
 Rules:
-- SUSPICIOUS: this claim conflicts with another claim (simultaneous full-time jobs, impossible dates, metrics that defy the stated context like $500M revenue at a 5-person startup, 200 engineers led by a solo employee)
-- UNVERIFIABLE: claim is plausible on its own and consistent with all others — do NOT flag just because you can't verify it externally
+- SUSPICIOUS: flag ONLY when this claim conflicts with another claim in the list, OR when a metric is logically impossible given the stated context. Specific cases:
+  * Simultaneous full-time jobs with overlapping date ranges
+  * A metric impossible for the stated context (e.g. $500M revenue at a 5-person startup in 6 months; 200 engineers managed by someone listed as a solo contributor; 50M users at a company founded last month)
+  * Two claims that explicitly contradict each other
+- UNVERIFIABLE: claim is plausible and consistent with all other claims — use this in all other cases
+- CRITICAL — do NOT flag as SUSPICIOUS:
+  * Impressive metrics at large, established companies (cost reductions, growth percentages, dollar savings, team sizes of 10–50) — these are normal at companies like Google, AWS, Meta, Stripe
+  * A large number by itself without a contradicting claim
+  * Claims that are unverifiable externally but internally consistent
+- confidence: 0.9 for explicit overlapping date ranges or "simultaneously"; 0.7 for strongly implied conflicts; do NOT produce SUSPICIOUS with confidence below 0.7 — use UNVERIFIABLE instead
 - Return exactly one verdict object per input claim, using the same index number
-- confidence 0.9 for explicit overlapping date ranges or "simultaneously"/"concurrent"; 0.7 for strongly implied conflicts; 0.5 for borderline implausibility
-- overall_pattern: one sentence summarizing the main red flag across all claims, or null if none`;
+- overall_pattern: one sentence summarizing the clearest red flag across all claims, or null if no genuine conflicts found`;
 
 export function makeBatchConsistencyUser(
   claims: Array<{ index: number; text: string }>

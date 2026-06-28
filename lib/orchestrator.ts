@@ -46,6 +46,7 @@ export interface RepoData {
 export interface ClaimContext {
   claimText: string;
   claimType: ClaimType;
+  candidateName?: string;           // used by query writer for award/authorship queries
   allCandidateClaims: string[];    // all claim texts for this candidate (consistency check)
   githubHandle?: string | null;
   githubRepos?: RepoData[];
@@ -89,12 +90,12 @@ const VERIFIER_FALLBACK = {
 
 // ── Individual agents ─────────────────────────────────────────────────────────
 
-async function runWebPipeline(claimText: string): Promise<AgentResult> {
+async function runWebPipeline(claimText: string, candidateName?: string): Promise<AgentResult> {
   // Step 1 — Query Writer (fast): produce the best search query for this claim
   const { data: qw, tokens: qwTokens, model: qwModel } = await chatJSON(
     QueryWriterOutputSchema,
     QUERY_WRITER_SYSTEM,
-    makeQueryWriterUser(claimText),
+    makeQueryWriterUser(claimText, candidateName),
     { query: claimText.replace(/^(I|we|my team)\s+/i, "").slice(0, 120) },
     15000,
     "fast"
@@ -224,7 +225,7 @@ function agentCost(agent: AgentResult): number {
 // ── Orchestrator entry point ──────────────────────────────────────────────────
 
 export async function orchestrateClaim(ctx: ClaimContext): Promise<OrchestratorResult> {
-  const { claimText, claimType, githubHandle, githubRepos, precomputedVerdict } = ctx;
+  const { claimText, claimType, candidateName, githubHandle, githubRepos, precomputedVerdict } = ctx;
 
   // ── INTERNAL: consistency check ───────────────────────────────────────────
   if (claimType === "INTERNAL_UNVERIFIABLE") {
@@ -260,7 +261,7 @@ export async function orchestrateClaim(ctx: ClaimContext): Promise<OrchestratorR
   // ── EXTERNAL: web + github in parallel ───────────────────────────────────
   const hasGithub = !!(githubHandle && githubRepos && githubRepos.length > 0);
 
-  const tasks: Promise<AgentResult>[] = [runWebPipeline(claimText)];
+  const tasks: Promise<AgentResult>[] = [runWebPipeline(claimText, candidateName)];
 
   if (hasGithub) {
     tasks.push(runGithubAgent(claimText, githubHandle!, githubRepos!));
@@ -273,6 +274,13 @@ export async function orchestrateClaim(ctx: ClaimContext): Promise<OrchestratorR
   if (merged.verdict === "SUSPICIOUS") {
     merged.verdict = "UNVERIFIABLE";
     merged.reasoning = `[Agents disagreed but neither decisive] ${merged.reasoning}`;
+  }
+
+  // A REFUTED verdict with very low confidence is unreliable — treat as UNVERIFIABLE
+  // rather than surfacing a likely false positive to the recruiter.
+  if (merged.verdict === "REFUTED" && merged.confidence < 0.4) {
+    merged.verdict = "UNVERIFIABLE";
+    merged.reasoning = `[Low-confidence refutation — insufficient evidence to flag] ${merged.reasoning}`;
   }
 
   const costUsd = results.reduce((acc, r) => acc + agentCost(r), 0);
