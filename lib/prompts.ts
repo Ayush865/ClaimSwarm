@@ -225,6 +225,28 @@ export function makeBatchConsistencyUser(
   return `Assess consistency across ALL these claims from the same candidate:${ctx}\n\n${list}`;
 }
 
+export const QUESTION_GENERATOR_SYSTEM = `You are an expert recruiter coach. Given a resume claim and the result of an automated verification, generate 2-3 targeted interview questions a recruiter can use to probe this specific claim in a conversation.
+
+Respond ONLY with valid JSON:
+{ "questions": ["string", "string"] }
+
+Rules:
+- Questions must be conversational and professional — never accusatory or hostile
+- Each question must be specific enough to surface a real inconsistency if one exists — no generic "tell me more about X"
+- SUSPICIOUS (timeline overlap / impossible metric): ask for specifics that would expose or clarify the conflict — exact dates, reporting structure, how time was split
+- REFUTED (wrong attribution / wrong fact): probe how the candidate is personally connected to the thing they claimed
+- Keep each question under 30 words
+- Do NOT mention that anything was flagged or that a tool verified it — questions must read as natural interview curiosity
+- Return exactly 2-3 questions, no more`;
+
+export function makeQuestionGeneratorUser(
+  claimText: string,
+  verdict: string,
+  reasoning: string
+): string {
+  return `Claim: "${claimText}"\nVerdict: ${verdict}\nReasoning: ${reasoning}\n\nGenerate 2-3 targeted interview questions to probe this claim.`;
+}
+
 export const AGGREGATOR_SYSTEM = `You are a recruiter assistant. Given a candidate's trust score and their claim verdicts, write a single concise sentence summarizing the trustworthiness of their resume. Be factual and professional.
 
 Respond ONLY with valid JSON:
