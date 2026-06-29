@@ -62,7 +62,7 @@ export default function LandingPage() {
         <div className="flex items-center justify-center gap-2 bg-primary/10 border border-primary/20 rounded-full px-4 py-1.5 mb-6 w-fit">
           <div className="w-2 h-2 shrink-0 rounded-full bg-primary animate-pulse" />
           <span className="text-xs text-primary font-medium">
-            Multi-agent · Web search · ~$0.03 per batch
+            Multi-agent · Web search · GitHub cross-check
           </span>
         </div>
 
@@ -74,7 +74,7 @@ export default function LandingPage() {
 
         <p className="text-lg text-muted-foreground mb-10 max-w-xl">
           AI-fabricated resumes pass screeners. ClaimSwarm fans out one agent per
-          claim — verified via web search, flagged with evidence, never auto-rejected.
+          claim - verified via web search, flagged with evidence, never auto-rejected.
         </p>
 
         <div className="flex items-center gap-4">

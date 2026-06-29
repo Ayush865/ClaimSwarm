@@ -30,7 +30,6 @@ export function SwarmGrid({ jobId, initialClaims, initialJob, candidates }: Swar
   const [job, setJob] = useState<Job>(initialJob);
   const [isRunning, setIsRunning] = useState(false);
   const [startedAt, setStartedAt] = useState<number | null>(null);
-  const [accumulatedCost, setAccumulatedCost] = useState(0);
   const driverRef = useRef<AbortController | null>(null);
 
   // Subscribe to Realtime for this job
@@ -68,7 +67,6 @@ export function SwarmGrid({ jobId, initialClaims, initialJob, candidates }: Swar
     if (isRunning) return;
     setIsRunning(true);
     setStartedAt(Date.now());
-    setAccumulatedCost(0);
 
     const ctrl = new AbortController();
     driverRef.current = ctrl;
@@ -85,7 +83,6 @@ export function SwarmGrid({ jobId, initialClaims, initialJob, candidates }: Swar
         if (!resp.ok) break;
         const data = await resp.json();
         remaining = data.remaining ?? 0;
-        if (data.costUsd) setAccumulatedCost((prev) => prev + data.costUsd);
 
         if (remaining === 0) break;
       }
@@ -134,7 +131,7 @@ export function SwarmGrid({ jobId, initialClaims, initialJob, candidates }: Swar
           claimsDone={doneCount}
           activeAgents={runningCount}
           totalClaims={job.total_claims}
-          costUsd={isRunning ? accumulatedCost : Number(job.cost_usd)}
+          costUsd={Number(job.cost_usd ?? 0)}
           isRunning={isRunning}
           startedAt={startedAt}
         />

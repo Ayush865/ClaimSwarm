@@ -81,10 +81,17 @@ export default async function JobPage({ params }: PageProps) {
         candidates={typedCandidates}
       />
 
-      {/* Model badge */}
+      {/* Token + cost badge */}
       <div className="fixed bottom-4 right-4 flex items-center gap-1.5 bg-slate-900/90 border border-slate-700 rounded-full px-3 py-1.5 text-xs text-muted-foreground backdrop-blur-sm">
         <div className="w-1.5 h-1.5 rounded-full bg-primary" />
-        llama-3.1-8b-instant
+        {Number(typedJob.tokens_used) > 0 ? (
+          <>
+            <span className="font-mono">{Number(typedJob.tokens_used).toLocaleString()}</span>
+            <span className="text-slate-500">tok</span>
+          </>
+        ) : (
+          <span>no runs yet</span>
+        )}
         {Number(typedJob.cost_usd) > 0 && (
           <>
             <span className="text-slate-600">·</span>

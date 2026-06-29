@@ -11,7 +11,7 @@ Rules:
 - CREATION/AUTHORSHIP claims ("created X", "invented X", "original author of X", "founded X"): Do NOT include the candidate's name. Instead write a query that finds who actually created the thing — e.g. "React.js creator history origin" or "Next.js who created founded". The verifier needs to know the real creator to detect a false attribution. The candidate's name will not help here.
 - FACTUAL STATEMENTS about third parties ("X was founded by Y", "X has N employees", "X raised $Nm in funding", "X was acquired by Y in year Z"): These are claims about a company or entity, not personal achievements. Do NOT include the candidate's name. Write a query that verifies the stated fact — e.g. "Stripe founded year founders" or "Collison brothers founded Stripe 2010". The goal is to check whether the stated fact is true, not whether the candidate did it.
 - AWARDS/PRIZES ("won X award", "received X prize"): Include the candidate's full name. The goal is to find evidence this specific person won it.
-- PAPER AUTHORSHIP ("co-authored paper X"): Include the candidate's name + paper title.
+- CO-AUTHORSHIP / CO-CREATION ("co-authored X with Y", "co-created X with Y", "co-founded X with Y"): Do NOT include the candidate's name. Search for who actually authored/created/founded the work — e.g. "Inspired book author" or "Scaling Laws Neural Language Models authors OpenAI". The verifier needs the real attribution record; searching for an unknown candidate name returns nothing useful.
 - EMPLOYMENT/EDUCATION ("worked at X", "degree from Y"): Focus on the institution/company; candidate name optional.
 - Put exact award names, paper titles, and product/framework names in double quotes.
 - Include year if the claim names one.
@@ -30,7 +30,10 @@ Examples:
   Query: "Jane Smith" "ACM Turing Award" 2020
 
   Claim: "Co-authored 'Attention Is All You Need' at NeurIPS 2017" (candidate: John Doe)
-  Query: "John Doe" "Attention Is All You Need" NeurIPS 2017 author
+  Query: "Attention Is All You Need" NeurIPS 2017 authors
+
+  Claim: "Co-authored a product management book with a named author" (candidate: any)
+  Query: [book title] author [named co-author]
 
   Claim: "Co-created Create React App at Facebook" (candidate: Alex Rivera)
   Query: "Create React App" creator founded origin history
@@ -71,7 +74,7 @@ Respond ONLY with valid JSON matching this schema:
 Claim type rules:
 - GITHUB_VERIFIABLE: claims about open-source contributions, GitHub repos, code authorship, OSS project creation/maintainership, technical tools built — ONLY use this when a GitHub handle is present in the resume so we can cross-check the repos directly
 - PUBLIC_VERIFIABLE: checkable via web search but not specifically through GitHub (degrees, publications, awards, job titles at public companies, speaking at conferences)
-- INTERNAL_UNVERIFIABLE: private metrics with no public trace ("cut costs 30%", "led team of 10", "increased revenue by X%", internal team sizes)
+- INTERNAL_UNVERIFIABLE: private metrics with no public trace ("cut costs 30%", "led team of 10", "increased revenue by X%", internal team sizes). ALSO use INTERNAL_UNVERIFIABLE — regardless of whether the employer is a public company — whenever the claim describes simultaneous or concurrent full-time employment (contains words like "simultaneously", "concurrent", "at the same time", "while also" in the context of holding a full-time role). The simultaneity is what's being checked, not the employer.
 
 Importance:
 - high: credibility-defining (degrees, major OSS authorship, senior roles, awards)
@@ -107,19 +110,28 @@ IMPORTANT — TWO CLAIM TYPES REQUIRE DIFFERENT LOGIC:
 
 Determine which type the claim is before applying verdict rules.
 
-Rules:
-- SUPPORTED (personal-credit): search results directly confirm that THIS SPECIFIC PERSON (by name) did or achieved what is claimed. Generic facts about the institution, company, topic, or award are NOT sufficient — you need evidence explicitly naming the individual.
-- SUPPORTED (factual-statement): search results confirm the third-party fact as stated. The candidate's name need not appear.
-- REFUTED: search results directly contradict the claim. Two sub-cases:
-    (a) Search results name a DIFFERENT SPECIFIC person as the sole creator/author/recipient — return REFUTED only when search results make this clear and there is no plausible way the candidate could also qualify.
-    (b) Search results show a demonstrably wrong fact (wrong year, wrong company, non-existent entity).
-- UNVERIFIABLE: the institution/company/award/topic exists but there is no evidence in the search results specifically linking THIS PERSON to the claimed credential, role, or achievement.
-- KEY RULE — creator/author attribution: if search results name a specific person as the creator or primary author of something the candidate claims to have created, and that person is different from the candidate, return REFUTED. This determination must come from search results, not your training data.
-- KEY RULE — awards and prizes with a fixed winner list: if search results show a small, named set of recipients and the candidate's name does not appear among them, return REFUTED.
-- KEY RULE — paper authorship: if results show the paper's author list and the candidate's name is absent, return REFUTED. If results discuss the paper but do not show the full author list, return UNVERIFIABLE.
-- KEY RULE — common names: if results show OTHER people with the same name at different institutions or companies, that does NOT refute the claim. Return UNVERIFIABLE in this case.
-- KEY RULE — degree/employment claims: finding that "Harvard has an MBA program" or "Google employs engineers" does NOT support a claim that a specific person holds that degree or worked there. Return UNVERIFIABLE unless a result names the individual directly.
-- confidence: 0.9 when the individual is named directly and unambiguously in search results; 0.5–0.7 for strong indirect evidence; 0.3 or lower for weak or ambiguous evidence
+Verdict rules:
+
+SUPPORTED
+- Personal-credit claim ("I created X", "I won Y", "I co-authored Z"): search results explicitly name THIS candidate as the creator/winner/author. Generic facts about the institution or work are not enough — the candidate's name must appear.
+- Factual-statement claim ("X was founded in year Y", "X raised $N"): search results confirm the third-party fact. The candidate's name need not appear.
+
+REFUTED
+- Attribution/authorship/creation: the candidate claims personal credit for creating, inventing, authoring, co-authoring, or founding something. Search results consistently identify specific other person(s) as the creator/author/founder of that exact thing, without mentioning the candidate. Return REFUTED when:
+  · Multiple results agree on the same named creator(s) / author(s) who are not the candidate.
+  · You do NOT need "sole author" or "no co-author" language. "Created by X", "Author: X", "Founded by X" in search results, with no mention of the candidate, is sufficient — for well-documented works (papers, books, open-source projects, companies, tools) the public attribution record is authoritative. Absence of the candidate from that record across multiple results IS the evidence.
+  · This applies equally to any type of work: open-source framework, academic paper, book, patent, company, or tool.
+- Wrong fact: search results show a demonstrably incorrect detail (wrong year, wrong company, non-existent entity).
+
+UNVERIFIABLE
+- The work/institution/award exists but search results contain no information about the candidate's involvement — neither confirming nor contradicting.
+- The work has many contributors by nature (e.g. large OSS projects, standards committees) and the candidate claims a non-primary role (contributor, committee member, participant) — absence from search results does not refute such claims.
+- Search results contain people with the same name at different institutions — that does NOT refute the claim. Return UNVERIFIABLE.
+
+Additional rules:
+- Degree/employment: finding that "Harvard has an MBA program" or "Google employs engineers" does NOT support the claim. Return UNVERIFIABLE unless a result names the individual directly.
+- Awards with a small named winner list: if results show the full recipient list and the candidate is absent, return REFUTED.
+- confidence: 0.9 when candidate is named directly and unambiguously; 0.5–0.7 for strong indirect evidence; 0.3 or lower for weak evidence
 - Include only the top 2–3 most relevant evidence items`;
 
 export function makeVerifierPublicUser(

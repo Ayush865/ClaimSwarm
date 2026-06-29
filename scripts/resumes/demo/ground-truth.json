@@ -1,0 +1,98 @@
+[
+  {
+    "candidate_name": "Sindre Sorhus",
+    "claim_text": "Creator of the Awesome GitHub list, one of the most starred repositories on GitHub with over 200,000 stars",
+    "expected_verdict": "SUPPORTED",
+    "note": "sindresorhus/awesome is real, has 350k+ stars. '200k+' is an undercount but technically correct as a lower bound."
+  },
+  {
+    "candidate_name": "Sindre Sorhus",
+    "claim_text": "Creator of Chalk, Ora, Got, AVA test runner, and hundreds of widely-adopted Node.js utilities",
+    "expected_verdict": "SUPPORTED",
+    "note": "All verifiable on GitHub/npm. Chalk, Ora, Got, AVA are all his packages."
+  },
+  {
+    "candidate_name": "Sindre Sorhus",
+    "claim_text": "Maintains over 1,100 npm packages with 2 billion monthly downloads",
+    "expected_verdict": "SUPPORTED",
+    "note": "Well-documented public fact. 2B downloads/month has been cited in multiple sources."
+  },
+  {
+    "candidate_name": "Kent C. Dodds",
+    "claim_text": "Creator of Testing Library, the standard testing approach for React applications with 33 million weekly downloads",
+    "expected_verdict": "SUPPORTED",
+    "note": "Confirmed. Kent created Testing Library at PayPal. His own resume states 33m+ weekly downloads."
+  },
+  {
+    "candidate_name": "Kent C. Dodds",
+    "claim_text": "Google Developer Expert in Web Technologies",
+    "expected_verdict": "SUPPORTED",
+    "note": "Confirmed via developers.google.com/experts/people/kent-c-dodds."
+  },
+  {
+    "candidate_name": "Kent C. Dodds",
+    "claim_text": "TC-39 JavaScript Standards Committee Member",
+    "expected_verdict": "SUPPORTED",
+    "note": "Confirmed. Kent represented PayPal on the TC39 committee."
+  },
+  {
+    "candidate_name": "Kent C. Dodds",
+    "claim_text": "Joined as Director of Developer Experience at Remix, founded by Ryan Florence and Michael Jackson",
+    "expected_verdict": "SUPPORTED",
+    "note": "Remix was indeed founded by Ryan Florence and Michael Jackson. Kent joined as Director of DX in 2021."
+  },
+  {
+    "candidate_name": "Kent C. Dodds",
+    "claim_text": "Created Testing Library while at PayPal; now the most-downloaded React testing library",
+    "expected_verdict": "SUPPORTED",
+    "note": "Confirmed. Testing Library was created during his time as a web infrastructure engineer at PayPal."
+  },
+  {
+    "candidate_name": "Carlos Mendez",
+    "claim_text": "Stripe was founded in 2010 by Patrick Collison and John Collison and processes payments for millions of businesses",
+    "expected_verdict": "SUPPORTED",
+    "note": "True public fact. Stripe was co-founded by Patrick and John Collison in 2010 and is a major global payments processor."
+  },
+  {
+    "candidate_name": "Carlos Mendez",
+    "claim_text": "Co-authored 'Inspired: How to Create Tech Products Customers Love' (Wiley, 2018) with Marty Cagan",
+    "expected_verdict": "REFUTED",
+    "note": "FALSE. 'Inspired' is authored solely by Marty Cagan (published by Wiley, 2nd edition 2018). No co-author. Carlos Mendez is not listed anywhere in the book's publication record."
+  },
+  {
+    "candidate_name": "Carlos Mendez",
+    "claim_text": "As the sole PM at BuiltFast, a 12-person company, directed a product roadmap executed by 80 engineers and grew ARR from $0 to $50M in 10 months",
+    "expected_verdict": "SUSPICIOUS",
+    "note": "IMPOSSIBLE. A 12-person company cannot have 80 engineers. The engineer count alone exceeds total headcount by 6.7x. $50M ARR in 10 months at a seed-stage company also defies economic plausibility."
+  },
+  {
+    "candidate_name": "Carlos Mendez",
+    "claim_text": "Increased Stripe checkout conversion rate by 18% through A/B tested redesign of the payment confirmation flow",
+    "expected_verdict": "UNVERIFIABLE",
+    "note": "Private internal metric from a corporate role. No public record of individual PM conversion-rate improvements at Stripe."
+  },
+  {
+    "candidate_name": "Emma Johansson",
+    "claim_text": "Next.js is a real open-source React framework created by Vercel with over 120,000 GitHub stars",
+    "expected_verdict": "SUPPORTED",
+    "note": "True public fact. Next.js was created by Vercel and has well over 100k GitHub stars."
+  },
+  {
+    "candidate_name": "Emma Johansson",
+    "claim_text": "Created Vite, the next-generation JavaScript build tool used by Vue, Svelte, and React projects (released 2020)",
+    "expected_verdict": "REFUTED",
+    "note": "FALSE. Vite was created by Evan You (creator of Vue.js) in early 2020. Evan You is the documented creator. Emma Johansson had no role in its creation."
+  },
+  {
+    "candidate_name": "Emma Johansson",
+    "claim_text": "Simultaneously holds a full-time Staff Engineer role at Linear and a full-time Core Framework Engineer role at Vercel on the Next.js team since January 2022",
+    "expected_verdict": "SUSPICIOUS",
+    "note": "IMPOSSIBLE. Two simultaneous full-time positions at different companies since January 2022 — explicitly stated as concurrent in the resume."
+  },
+  {
+    "candidate_name": "Emma Johansson",
+    "claim_text": "Reduced bundle size by 43% at Linear through component-level code splitting and dynamic imports",
+    "expected_verdict": "UNVERIFIABLE",
+    "note": "Private internal performance metric. No public source could confirm this figure."
+  }
+]

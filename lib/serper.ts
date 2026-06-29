@@ -14,6 +14,8 @@ function normalizeQuery(q: string) {
 const SERPER_KEYS = [
   process.env.SERPER_API_KEY,
   process.env.SERPER_API_KEY_FALLBACK,
+  process.env.SERPER_API_KEY_3,
+  process.env.SERPER_API_KEY_4,
 ].filter(Boolean) as string[];
 
 // Round-robin cursor — claim 1 starts on key 0, claim 2 on key 1, etc.

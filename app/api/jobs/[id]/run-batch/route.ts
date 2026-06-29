@@ -269,6 +269,12 @@ export async function POST(
 
   const totalTokens = totalInputTokens + totalOutputTokens;
 
+  console.log(
+    `[batch] ✓ job=${jobId} claims=${processed}` +
+    ` | tokens: ${totalInputTokens.toLocaleString()} in + ${totalOutputTokens.toLocaleString()} out = ${totalTokens.toLocaleString()} total` +
+    ` | cost: $${totalCostUsd.toFixed(4)}`
+  );
+
   await db
     .from("jobs")
     .update({
