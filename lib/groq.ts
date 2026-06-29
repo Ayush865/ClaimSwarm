@@ -128,29 +128,23 @@ const POOL = buildPool();
 // Module-level: persists across parallel calls within the same serverless instance.
 
 let rrCursor = 0;
-const blockedUntil = new Map<string, number>(); // provider → timestamp
+const blockedUntil = new Map<string, number>(); // provider → unblock timestamp
 
 function markBlocked(name: string, ms: number) {
   blockedUntil.set(name, Date.now() + ms);
   console.warn(`[llm] ${name} rate-limited for ${(ms / 1000).toFixed(0)}s`);
 }
 
-function availablePool(): ProviderDef[] {
-  const now = Date.now();
-  return POOL.filter((p) => (blockedUntil.get(p.name) ?? 0) <= now);
+function isBlocked(name: string): boolean {
+  return (blockedUntil.get(name) ?? 0) > Date.now();
 }
 
-function pickProvider(): ProviderDef {
-  const available = availablePool();
-  if (available.length === 0) {
-    // All blocked — return the one unblocking soonest
-    return POOL.reduce((a, b) =>
-      (blockedUntil.get(a.name) ?? 0) <= (blockedUntil.get(b.name) ?? 0) ? a : b
-    );
-  }
-  const p = available[rrCursor % available.length];
+// Returns the index of the starting provider for a new call (round-robin).
+// Advances the cursor so concurrent calls start from different providers.
+function startIndex(): number {
+  const idx = rrCursor % POOL.length;
   rrCursor++;
-  return p;
+  return idx;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -284,50 +278,49 @@ export async function chatJSON<T>(
     { role: "user", content: user },
   ];
 
-  // Try up to POOL.length × 2 times so each provider gets at least 2 chances
-  const maxAttempts = POOL.length * 2;
+  // Round-robin picks which provider gets the FIRST attempt for this call.
+  // On failure, we walk sequentially through ALL remaining providers — never skipping one.
+  const start = startIndex();
 
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const available = availablePool();
+  async function tryAll(skipBlocked: boolean): Promise<ChatJSONResult<T> | null> {
+    for (let i = 0; i < POOL.length; i++) {
+      const provider = POOL[(start + i) % POOL.length];
+      if (skipBlocked && isBlocked(provider.name)) continue;
 
-    // All providers rate-limited — wait for the soonest to unblock
-    if (available.length === 0) {
-      const soonestMs = Math.min(...POOL.map((p) => blockedUntil.get(p.name) ?? 0)) - Date.now();
-      const wait = Math.max(soonestMs + 500, 1000);
-      console.log(`[llm] all providers rate-limited, waiting ${(wait / 1000).toFixed(1)}s`);
-      await sleep(wait);
+      try {
+        const result = await tryProvider(provider, schema, messages, tier, timeoutMs);
+        if (i > 0) console.log(`[llm] succeeded on ${provider.name} after ${i} skip(s)`);
+        return result;
+      } catch (err: unknown) {
+        const status = (err as { status?: number })?.status;
+        const isAbort = err instanceof Error && (err.name === "AbortError" || err.message?.includes("abort"));
+
+        if (status === 429) {
+          markBlocked(provider.name, parseRetryAfterMs(err));
+        } else if (isAbort) {
+          console.warn(`[llm] ${provider.name} timed out (${timeoutMs}ms)`);
+        } else {
+          const msg = (err as Error)?.message ?? String(err);
+          console.warn(`[llm] ${provider.name} failed: ${msg}`);
+        }
+        // always continue to next provider
+      }
     }
-
-    const provider = pickProvider();
-
-    try {
-      const result = await tryProvider(provider, schema, messages, tier, timeoutMs);
-      if (attempt > 0) console.log(`[llm] succeeded on ${provider.name} (attempt ${attempt + 1})`);
-      return result;
-    } catch (err: unknown) {
-      const status = (err as { status?: number })?.status;
-      const isAbort = err instanceof Error && (err.name === "AbortError" || err.message?.includes("abort"));
-
-      if (status === 429) {
-        markBlocked(provider.name, parseRetryAfterMs(err));
-        continue; // immediately try next provider
-      }
-
-      if (isAbort) {
-        console.warn(`[llm] ${provider.name} timed out after ${timeoutMs}ms, trying next`);
-        continue;
-      }
-
-      if (status !== undefined && status >= 500) {
-        console.warn(`[llm] ${provider.name} server error ${status}, trying next`);
-        continue;
-      }
-
-      // Schema parse failure or other soft error — try next provider
-      const msg = (err as Error)?.message ?? String(err);
-      console.warn(`[llm] ${provider.name} failed (${msg}), trying next`);
-    }
+    return null;
   }
+
+  // Pass 1: try all non-blocked providers in sequence
+  const first = await tryAll(true);
+  if (first !== null) return first;
+
+  // Pass 2: all were blocked — wait for the soonest to unblock, then sweep again
+  const soonestMs = Math.min(...POOL.map((p) => blockedUntil.get(p.name) ?? 0)) - Date.now();
+  const wait = Math.max(soonestMs + 500, 1000);
+  console.log(`[llm] all providers blocked, waiting ${(wait / 1000).toFixed(1)}s then retrying`);
+  await sleep(wait);
+
+  const second = await tryAll(false);
+  if (second !== null) return second;
 
   console.error("[llm] all providers exhausted, returning hardcoded fallback");
   return { data: fallback, tokens: { input: 0, output: 0 }, model: "none" };
