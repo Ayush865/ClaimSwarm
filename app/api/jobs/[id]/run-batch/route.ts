@@ -6,6 +6,7 @@ import { computeCost } from "@/lib/cost";
 import { BATCH_CONSISTENCY_SYSTEM, makeBatchConsistencyUser } from "@/lib/prompts";
 import { BatchConsistencyOutputSchema } from "@/lib/types";
 import { orchestrateClaim, type RepoData } from "@/lib/orchestrator";
+import { search as serperSearch } from "@/lib/serper";
 import pLimit from "p-limit";
 
 export const maxDuration = 60;
@@ -119,7 +120,7 @@ export async function POST(
 
   const { data: candidateRows } = await db
     .from("candidates")
-    .select("id, name, github_handle")
+    .select("id, name, github_handle, employers")
     .in("id", candidateIdsInBatch);
 
   const reposByCandidate = new Map<string, RepoData[]>();
@@ -136,7 +137,37 @@ export async function POST(
     })
   );
 
-  // 3. Batch consistency check — one LLM call per candidate with INTERNAL claims
+  // 3. Company context — use the LLM-extracted employers list per candidate to search
+  //    for each company. Results are shared across both the consistency checker and
+  //    individual claim agents (keyed by company name for per-claim lookup).
+  const companySnippets = new Map<string, string>();        // company name → snippet text
+  const companyContextByCandidate = new Map<string, string>(); // candidateId → combined block
+
+  const employersByCandidate = new Map<string, string[]>();
+  for (const row of candidateRows ?? []) {
+    const employers: string[] = (row as { employers?: string[] }).employers ?? [];
+    if (employers.length) employersByCandidate.set(row.id, employers);
+  }
+
+  // Search for every unique employer across the batch in parallel (serper has in-process cache)
+  const allEmployers = [...new Set([...employersByCandidate.values()].flat().filter(Boolean))];
+  await Promise.all(
+    allEmployers.map(async (company) => {
+      const results = await serperSearch(`"${company}" company employees headcount funding stage`, 2);
+      if (!results.length) return;
+      companySnippets.set(company, results.map((r) => `  - ${r.snippet}`).join("\n"));
+    })
+  );
+
+  // Build per-candidate context block (all employers combined)
+  for (const [candidateId, employers] of employersByCandidate) {
+    const blocks = employers
+      .map((c) => { const s = companySnippets.get(c); return s ? `${c}:\n${s}` : null; })
+      .filter(Boolean) as string[];
+    if (blocks.length) companyContextByCandidate.set(candidateId, blocks.join("\n\n"));
+  }
+
+  // 4. Batch consistency check — one LLM call per candidate with INTERNAL claims
   //    (more efficient and accurate than one call per internal claim)
   const internalClaimsByCandidate = new Map<string, typeof claimedClaims>();
   for (const claim of claimedClaims) {
@@ -152,12 +183,13 @@ export async function POST(
   let batchInputTokens = 0;
   let batchOutputTokens = 0;
 
-  for (const [, internalClaims] of internalClaimsByCandidate) {
+  for (const [candidateId, internalClaims] of internalClaimsByCandidate) {
     const input = internalClaims.map((c, i) => ({ index: i, text: c.text }));
+    const companyContext = companyContextByCandidate.get(candidateId);
     const { data: result, tokens, model } = await chatJSON(
       BatchConsistencyOutputSchema,
       BATCH_CONSISTENCY_SYSTEM,
-      makeBatchConsistencyUser(input),
+      makeBatchConsistencyUser(input, companyContext),
       { verdicts: [], overall_pattern: null },
       30000,
       "reasoning"
@@ -170,7 +202,7 @@ export async function POST(
       const claim = internalClaims[v.index];
       if (claim) {
         batchVerdictMap.set(claim.id, {
-          verdict: v.verdict,
+          verdict: v.verdict as string,
           confidence: v.confidence,
           reasoning: result.overall_pattern
             ? `[Pattern: ${result.overall_pattern}] ${v.reasoning}`
@@ -196,6 +228,9 @@ export async function POST(
       pool(async () => {
 
         try {
+          const claimCompany: string | null = (claim as { company?: string | null }).company ?? null;
+          const companyContext = claimCompany ? companySnippets.get(claimCompany) ?? null : null;
+
           const result = await orchestrateClaim({
             claimText: claim.text,
             claimType: claim.claim_type,
@@ -204,6 +239,7 @@ export async function POST(
             githubHandle: handleByCandidate.get(claim.candidate_id) ?? null,
             githubRepos: reposByCandidate.get(claim.candidate_id),
             precomputedVerdict: batchVerdictMap.get(claim.id) ?? null,
+            companyContext,
           });
 
           await db

@@ -222,6 +222,84 @@ EDUCATION: Caltech — Ph.D. Physics, 2014`,
       { text: "Ph.D. in Physics from Caltech, 2014", claim_type: "PUBLIC_VERIFIABLE", importance: "medium", expected_verdict: "UNVERIFIABLE" },
     ],
   },
+
+  // ── 13: Python creator (Guido van Rossum) — real + one fabrication ────────
+  {
+    name: "Guido van Rossum",
+    github_handle: "gvanrossum",
+    rawText: `Guido van Rossum — Software Engineer
+GitHub: gvanrossum
+Microsoft — Distinguished Engineer (2020–Present)
+Dropbox — Principal Engineer (2013–2019)
+Google — Software Engineer (2005–2012)
+- Creator of Python programming language, first released in 1991
+- Also invented JavaScript and TypeScript at Netscape in 1995
+EDUCATION: University of Amsterdam — M.Sc. Mathematics and Computer Science, 1982`,
+    claims: [
+      { text: "Creator of the Python programming language, first released in 1991", claim_type: "PUBLIC_VERIFIABLE", importance: "high", expected_verdict: "SUPPORTED" },
+      { text: "Worked as a Software Engineer at Google from 2005 to 2012", claim_type: "PUBLIC_VERIFIABLE", importance: "high", expected_verdict: "SUPPORTED" },
+      { text: "Invented JavaScript and TypeScript at Netscape in 1995", claim_type: "PUBLIC_VERIFIABLE", importance: "high", expected_verdict: "REFUTED" },
+      { text: "M.Sc. in Mathematics and Computer Science from the University of Amsterdam, 1982", claim_type: "PUBLIC_VERIFIABLE", importance: "medium", expected_verdict: "SUPPORTED" },
+    ],
+  },
+
+  // ── 14: JavaScript creator (Brendan Eich) — real + fabrication ───────────
+  {
+    name: "Brendan Eich",
+    rawText: `Brendan Eich — Software Engineer & Entrepreneur
+Brave Software — CEO & Co-founder (2015–Present)
+Mozilla Foundation — Co-founder & former CTO
+Netscape — Created JavaScript programming language in 10 days in 1995
+- Also claims to have created the Linux kernel at Netscape in 1991
+EDUCATION: Santa Clara University — B.S. Mathematics, 1983
+           University of Illinois at Urbana-Champaign — M.S. Computer Science, 1985`,
+    claims: [
+      { text: "Created the JavaScript programming language at Netscape in 10 days in 1995", claim_type: "PUBLIC_VERIFIABLE", importance: "high", expected_verdict: "SUPPORTED" },
+      { text: "Co-founder of Mozilla Foundation and former CTO", claim_type: "PUBLIC_VERIFIABLE", importance: "high", expected_verdict: "SUPPORTED" },
+      { text: "CEO and co-founder of Brave Software", claim_type: "PUBLIC_VERIFIABLE", importance: "high", expected_verdict: "SUPPORTED" },
+      { text: "Created the Linux kernel at Netscape in 1991", claim_type: "PUBLIC_VERIFIABLE", importance: "high", expected_verdict: "REFUTED" },
+      { text: "M.S. Computer Science from University of Illinois at Urbana-Champaign, 1985", claim_type: "PUBLIC_VERIFIABLE", importance: "medium", expected_verdict: "SUPPORTED" },
+    ],
+  },
+
+  // ── 15: AI researcher with fabricated Turing Award ───────────────────────
+  {
+    name: "Yann LeCun",
+    rawText: `Yann LeCun — AI Researcher
+Meta — Chief AI Scientist (2013–Present)
+New York University — Silver Professor of Computer Science (2003–Present)
+AT&T Bell Labs — Research Scientist (1988–1996)
+- Pioneer of Convolutional Neural Networks (CNNs)
+- ACM Turing Award 2018 (shared with Geoffrey Hinton and Yoshua Bengio)
+- Invented the backpropagation algorithm (sole inventor, 1986)
+EDUCATION: Université Pierre et Marie Curie — Ph.D. Computer Science, 1987`,
+    claims: [
+      { text: "Chief AI Scientist at Meta (formerly Facebook) since 2013", claim_type: "PUBLIC_VERIFIABLE", importance: "high", expected_verdict: "SUPPORTED" },
+      { text: "ACM Turing Award 2018 recipient, shared with Geoffrey Hinton and Yoshua Bengio", claim_type: "PUBLIC_VERIFIABLE", importance: "high", expected_verdict: "SUPPORTED" },
+      { text: "Pioneer of Convolutional Neural Networks (CNNs) for image recognition", claim_type: "PUBLIC_VERIFIABLE", importance: "high", expected_verdict: "SUPPORTED" },
+      { text: "Sole inventor of the backpropagation algorithm in 1986", claim_type: "PUBLIC_VERIFIABLE", importance: "high", expected_verdict: "REFUTED" },
+      { text: "Ph.D. in Computer Science from Université Pierre et Marie Curie, 1987", claim_type: "PUBLIC_VERIFIABLE", importance: "medium", expected_verdict: "SUPPORTED" },
+    ],
+  },
+
+  // ── 16: Ghost engineer — impossible resume ────────────────────────────────
+  {
+    name: "Kevin Park",
+    rawText: `Kevin Park — Senior Engineer
+SpaceX — Lead Propulsion Engineer (Jan 2018 – Dec 2022, full-time)
+NASA JPL — Senior Mission Systems Engineer (Jan 2018 – Dec 2022, full-time concurrent)
+Tesla — Principal Autopilot Engineer (Jan 2018 – Dec 2022, full-time concurrent)
+- Reduced Falcon 9 fuel consumption by 40% saving $2B per launch
+- Published 12 peer-reviewed papers while working all three full-time roles
+EDUCATION: MIT — Ph.D. Aerospace Engineering, 2017`,
+    claims: [
+      { text: "Lead Propulsion Engineer at SpaceX full-time from January 2018 to December 2022", claim_type: "PUBLIC_VERIFIABLE", importance: "high", expected_verdict: "UNVERIFIABLE" },
+      { text: "Simultaneously held full-time Senior Mission Systems Engineer role at NASA JPL from January 2018 to December 2022, concurrent with SpaceX role", claim_type: "INTERNAL_UNVERIFIABLE", importance: "high", expected_verdict: "SUSPICIOUS" },
+      { text: "Also concurrently held full-time Principal Autopilot Engineer role at Tesla from January 2018 to December 2022, alongside both SpaceX and NASA roles", claim_type: "INTERNAL_UNVERIFIABLE", importance: "high", expected_verdict: "SUSPICIOUS" },
+      { text: "Reduced Falcon 9 fuel consumption by 40% saving $2B per launch", claim_type: "INTERNAL_UNVERIFIABLE", importance: "high", expected_verdict: "SUSPICIOUS" },
+      { text: "Ph.D. in Aerospace Engineering from MIT, 2017", claim_type: "PUBLIC_VERIFIABLE", importance: "medium", expected_verdict: "UNVERIFIABLE" },
+    ],
+  },
 ];
 
 const outPath = path.join(process.cwd(), "scripts", "synthetic-data.json");

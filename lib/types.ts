@@ -95,15 +95,20 @@ export const QueryWriterOutputSchema = z.object({
 });
 
 export const ExtractedClaimSchema = z.object({
-  text: z.string().min(5),
+  text: z.string().min(1),
   claim_type: z.enum(["PUBLIC_VERIFIABLE", "INTERNAL_UNVERIFIABLE", "GITHUB_VERIFIABLE"]),
   importance: z.enum(["high", "medium", "low"]),
+  company: z.string().nullable().optional(),  // employer/org this claim relates to
 });
 
 export const ExtractorOutputSchema = z.object({
   candidate_name: z.string().optional(),
   github_handle: z.string().nullable().optional(),
-  claims: z.array(ExtractedClaimSchema).min(1),
+  employers: z.array(z.string()).optional(),  // all employers/orgs on the resume
+  // Filter out empty/stub claims the LLM occasionally emits before enforcing min length
+  claims: z.array(ExtractedClaimSchema)
+    .transform((arr) => arr.filter((c) => c.text.trim().length >= 5))
+    .pipe(z.array(ExtractedClaimSchema).min(1)),
 });
 
 export type ExtractorOutput = z.infer<typeof ExtractorOutputSchema>;
@@ -147,7 +152,10 @@ export const GithubAgentOutputSchema = z.object({
 
 export const BatchConsistencyItemSchema = z.object({
   index: z.number().int(),
-  verdict: z.enum(["SUSPICIOUS", "UNVERIFIABLE"]),
+  verdict: z.preprocess(
+    (v) => (typeof v === "string" ? v.split("|")[0].trim() : v),
+    z.enum(["SUSPICIOUS", "UNVERIFIABLE"])
+  ),
   confidence: z.number().min(0).max(1),
   reasoning: z.string(),
 });

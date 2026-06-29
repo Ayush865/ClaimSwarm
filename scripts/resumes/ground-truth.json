@@ -1,0 +1,82 @@
+[
+  {
+    "candidate_name": "James Whitfield",
+    "claim_text": "HashiCorp Vault is a widely-used open-source secrets management and identity-based security tool",
+    "expected_verdict": "SUPPORTED"
+  },
+  {
+    "candidate_name": "James Whitfield",
+    "claim_text": "Original author of the Envoy proxy service mesh, open-sourced by Lyft at GopherCon 2016",
+    "expected_verdict": "REFUTED"
+  },
+  {
+    "candidate_name": "James Whitfield",
+    "claim_text": "Simultaneously held a full-time Staff SRE role at Google Cloud and a full-time Principal Engineer role at Datadog from January 2018 to January 2020",
+    "expected_verdict": "SUSPICIOUS"
+  },
+  {
+    "candidate_name": "James Whitfield",
+    "claim_text": "Reduced Cloudflare's P99 API latency by 41% through eBPF-based kernel-bypass networking",
+    "expected_verdict": "UNVERIFIABLE"
+  },
+  {
+    "candidate_name": "Sofia Larsson",
+    "claim_text": "DeepMind's AlphaFold 2 achieved a breakthrough in protein structure prediction at CASP14 in 2020",
+    "expected_verdict": "SUPPORTED"
+  },
+  {
+    "candidate_name": "Sofia Larsson",
+    "claim_text": "Co-authored 'Scaling Laws for Neural Language Models' (Kaplan, McCandlish et al., OpenAI Technical Report, 2020)",
+    "expected_verdict": "REFUTED"
+  },
+  {
+    "candidate_name": "Sofia Larsson",
+    "claim_text": "Led a team of 40 ML researchers and engineers at BioML Labs, a seed-stage startup with only 15 total employees",
+    "expected_verdict": "SUSPICIOUS"
+  },
+  {
+    "candidate_name": "Sofia Larsson",
+    "claim_text": "Improved Cohere's Command model inference throughput by 38% through quantization-aware training",
+    "expected_verdict": "UNVERIFIABLE"
+  },
+  {
+    "candidate_name": "Carlos Mendez",
+    "claim_text": "Stripe was founded in 2010 by Patrick Collison and John Collison and processes payments for millions of businesses",
+    "expected_verdict": "SUPPORTED"
+  },
+  {
+    "candidate_name": "Carlos Mendez",
+    "claim_text": "Co-authored 'Inspired: How to Create Tech Products Customers Love' (Wiley, 2018) with Marty Cagan",
+    "expected_verdict": "REFUTED"
+  },
+  {
+    "candidate_name": "Carlos Mendez",
+    "claim_text": "As the sole PM at BuiltFast, a 12-person company, directed a product roadmap executed by 80 engineers and grew ARR from $0 to $50M in 10 months",
+    "expected_verdict": "SUSPICIOUS"
+  },
+  {
+    "candidate_name": "Carlos Mendez",
+    "claim_text": "Increased Stripe checkout conversion rate by 18% through A/B tested redesign of the payment confirmation flow",
+    "expected_verdict": "UNVERIFIABLE"
+  },
+  {
+    "candidate_name": "Emma Johansson",
+    "claim_text": "Next.js is a real open-source React framework created by Vercel with over 120,000 GitHub stars",
+    "expected_verdict": "SUPPORTED"
+  },
+  {
+    "candidate_name": "Emma Johansson",
+    "claim_text": "Created Vite, the next-generation JavaScript build tool used by Vue, Svelte, and React projects (released 2020)",
+    "expected_verdict": "REFUTED"
+  },
+  {
+    "candidate_name": "Emma Johansson",
+    "claim_text": "Simultaneously holds a full-time Staff Engineer role at Linear and a full-time Core Framework Engineer role at Vercel on the Next.js team since January 2022",
+    "expected_verdict": "SUSPICIOUS"
+  },
+  {
+    "candidate_name": "Emma Johansson",
+    "claim_text": "Reduced bundle size by 43% at Linear through component-level code splitting and dynamic imports",
+    "expected_verdict": "UNVERIFIABLE"
+  }
+]

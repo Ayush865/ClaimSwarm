@@ -18,9 +18,6 @@ export async function POST(
   const { data: job } = await db.from("jobs").select("*").eq("id", jobId).single();
   if (!job) return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (job.user_id !== userId) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  if (job.source !== "synthetic") {
-    return NextResponse.json({ error: "Eval only available for synthetic jobs" }, { status: 400 });
-  }
 
   const { data: claims } = await db
     .from("claims")

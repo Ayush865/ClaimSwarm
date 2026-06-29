@@ -9,13 +9,20 @@ import { Button } from "@/components/ui/button";
 import type { Claim, Job } from "@/lib/types";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
+interface CandidateRow {
+  id: string;
+  name: string | null;
+  github_handle: string | null;
+}
+
 interface SwarmGridProps {
   jobId: string;
   initialClaims: Claim[];
   initialJob: Job;
+  candidates: CandidateRow[];
 }
 
-export function SwarmGrid({ jobId, initialClaims, initialJob }: SwarmGridProps) {
+export function SwarmGrid({ jobId, initialClaims, initialJob, candidates }: SwarmGridProps) {
   const router = useRouter();
   const [claims, setClaims] = useState<Map<string, Claim>>(
     new Map(initialClaims.map((c) => [c.id, c]))
@@ -162,16 +169,35 @@ export function SwarmGrid({ jobId, initialClaims, initialJob }: SwarmGridProps) 
           </div>
         </div>
 
-        {/* Grid */}
+        {/* Matrix — one row per candidate */}
         {claimList.length === 0 ? (
           <div className="py-16 text-center text-muted-foreground text-sm">
             No claims extracted yet.
           </div>
         ) : (
-          <div className="grid gap-1" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(24px, 1fr))" }}>
-            {claimList.map((claim) => (
-              <SwarmCell key={claim.id} claim={claim} />
-            ))}
+          <div className="space-y-1.5">
+            {candidates.map((candidate) => {
+              const candidateClaims = claimList.filter((c) => c.candidate_id === candidate.id);
+              if (candidateClaims.length === 0) return null;
+              const candidateDone = candidateClaims.filter((c) => c.status === "done" || c.status === "error").length;
+              return (
+                <div key={candidate.id} className="flex items-center gap-3 group">
+                  <div className="w-36 shrink-0 text-right">
+                    <span className="text-xs text-muted-foreground truncate block group-hover:text-foreground transition-colors">
+                      {candidate.name ?? "Unknown"}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground/50 font-mono">
+                      {candidateDone}/{candidateClaims.length}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {candidateClaims.map((claim) => (
+                      <SwarmCell key={claim.id} claim={claim} />
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
 

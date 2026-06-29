@@ -60,12 +60,10 @@ export default async function ReportsPage({ params }: PageProps) {
           <Users className="w-3.5 h-3.5" />
           Candidates
         </Link>
-        {typedJob.source === "synthetic" && (
-          <Link href={`/jobs/${id}/accuracy`} className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5">
-            <BarChart2 className="w-3.5 h-3.5" />
-            Accuracy
-          </Link>
-        )}
+        <Link href={`/jobs/${id}/accuracy`} className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5">
+          <BarChart2 className="w-3.5 h-3.5" />
+          Accuracy
+        </Link>
       </div>
 
       {/* Header stats */}

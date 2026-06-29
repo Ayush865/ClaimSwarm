@@ -187,18 +187,19 @@ async function handleUpload(
 
     const { data: extracted } = result;
 
-    // Update candidate with name + github handle
+    // Update candidate with name, github handle, and extracted employer list
     await db
       .from("candidates")
       .update({
         name: extracted.candidate_name ?? file.name.replace(/\.[^.]+$/, ""),
         github_handle: extracted.github_handle ?? null,
+        employers: extracted.employers ?? [],
         storage_path: storagePath,
         status: "extracted",
       })
       .eq("id", cand.id);
 
-    // Insert claims
+    // Insert claims (with the company each claim relates to)
     if (extracted.claims.length > 0) {
       const claimRows = extracted.claims.map((c) => ({
         candidate_id: cand.id,
@@ -206,6 +207,7 @@ async function handleUpload(
         text: c.text,
         claim_type: c.claim_type,
         importance: c.importance,
+        company: c.company ?? null,
         status: "pending",
       }));
       await db.from("claims").insert(claimRows);

@@ -48,7 +48,7 @@ export function SwarmCell({ claim }: SwarmCellProps) {
       <TooltipTrigger asChild>
         <div
           className={cn(
-            "aspect-square rounded-sm cursor-pointer transition-all duration-200",
+            "w-6 h-6 rounded-sm cursor-pointer transition-all duration-200 shrink-0",
             getCellStyle(claim.status, claim.verdict)
           )}
           aria-label={`${getStatusLabel(claim.status, claim.verdict)}: ${claim.text.slice(0, 60)}`}

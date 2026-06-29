@@ -50,6 +50,8 @@ export interface ClaimContext {
   allCandidateClaims: string[];    // all claim texts for this candidate (consistency check)
   githubHandle?: string | null;
   githubRepos?: RepoData[];
+  // Web-search snippets about the company this claim relates to (from LLM-extracted employers)
+  companyContext?: string | null;
   // Supplied for INTERNAL claims — result of the batch consistency check run
   // before the swarm pool (one LLM call for all internal claims per candidate).
   precomputedVerdict?: {
@@ -90,7 +92,7 @@ const VERIFIER_FALLBACK = {
 
 // ── Individual agents ─────────────────────────────────────────────────────────
 
-async function runWebPipeline(claimText: string, candidateName?: string): Promise<AgentResult> {
+async function runWebPipeline(claimText: string, candidateName?: string, companyContext?: string | null): Promise<AgentResult> {
   // Step 1 — Query Writer (fast): produce the best search query for this claim
   const { data: qw, tokens: qwTokens, model: qwModel } = await chatJSON(
     QueryWriterOutputSchema,
@@ -109,7 +111,7 @@ async function runWebPipeline(claimText: string, candidateName?: string): Promis
   const { data: v, tokens: vTokens, model: vModel } = await chatJSON(
     VerifierOutputSchema,
     VERIFIER_PUBLIC_SYSTEM,
-    makeVerifierPublicUser(claimText, searchResults, candidateName),
+    makeVerifierPublicUser(claimText, searchResults, candidateName, companyContext ?? undefined),
     VERIFIER_FALLBACK,
     30000,
     "reasoning"
@@ -262,7 +264,7 @@ export async function orchestrateClaim(ctx: ClaimContext): Promise<OrchestratorR
   // ── EXTERNAL: web + github in parallel ───────────────────────────────────
   const hasGithub = !!(githubHandle && githubRepos && githubRepos.length > 0);
 
-  const tasks: Promise<AgentResult>[] = [runWebPipeline(claimText, candidateName)];
+  const tasks: Promise<AgentResult>[] = [runWebPipeline(claimText, candidateName, ctx.companyContext)];
 
   if (hasGithub) {
     tasks.push(runGithubAgent(claimText, githubHandle!, githubRepos!));

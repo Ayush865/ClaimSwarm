@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, BarChart2, Users, Loader2 } from "lucide-react";
+import { BarChart2, Users, Loader2, Upload, Download } from "lucide-react";
 import { ConfusionMatrix } from "@/components/accuracy/ConfusionMatrix";
 import { MetricsBar } from "@/components/accuracy/MetricsBar";
 import { EvidenceTable } from "@/components/reports/EvidenceTable";
@@ -16,7 +16,10 @@ export default function AccuracyPage() {
 
   const [evalData, setEvalData] = useState<EvalResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<{ matched: number; unmatched: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   async function runEval() {
     setLoading(true);
@@ -24,13 +27,53 @@ export default function AccuracyPage() {
     try {
       const resp = await fetch(`/api/jobs/${id}/eval`, { method: "POST" });
       const data = await resp.json();
-      if (!resp.ok) {
-        setError(data.error ?? "Eval failed");
-      } else {
-        setEvalData(data);
-      }
+      if (!resp.ok) setError(data.error ?? "Eval failed");
+      else setEvalData(data);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function downloadTemplate() {
+    const resp = await fetch(`/api/jobs/${id}/ground-truth`);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `ground-truth-template-${id.slice(0, 8)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function importGroundTruth(file: File) {
+    setImporting(true);
+    setError(null);
+    setImportResult(null);
+    try {
+      const text = await file.text();
+      const json = JSON.parse(text);
+      // Accept both array and {claims: [...]} shapes
+      const payload = Array.isArray(json) ? json : json.claims ?? [];
+      // Normalise keys: support both {claim_text, expected_verdict} and {text, expected_verdict}
+      const normalised = payload.map((item: Record<string, string>) => ({
+        claim_text: item.claim_text ?? item.text ?? "",
+        expected_verdict: item.expected_verdict ?? item.expected ?? "",
+      }));
+
+      const resp = await fetch(`/api/jobs/${id}/ground-truth`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(normalised),
+      });
+      const data = await resp.json();
+      if (!resp.ok) setError(data.error ?? "Import failed");
+      else setImportResult(data);
+    } catch {
+      setError("Invalid JSON file");
+    } finally {
+      setImporting(false);
     }
   }
 
@@ -52,13 +95,60 @@ export default function AccuracyPage() {
       </div>
 
       {/* Header */}
-      <div className="space-y-2">
-        <h1 className="text-xl font-bold">Accuracy Analysis</h1>
-        <p className="text-sm text-muted-foreground">
-          Compare each claim&apos;s verdict against ground-truth labels planted in the synthetic set.
-          This is how we know the swarm works — not because it sounds good, but because we measured it.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div className="space-y-1">
+          <h1 className="text-xl font-bold">Accuracy Analysis</h1>
+          <p className="text-sm text-muted-foreground">
+            Compare each claim&apos;s verdict against ground-truth labels. Import a JSON file to set labels on any batch.
+          </p>
+        </div>
+
+        {/* Ground truth controls */}
+        <div className="flex items-center gap-2 shrink-0">
+          <Button variant="outline" size="sm" onClick={downloadTemplate} className="gap-1.5">
+            <Download className="w-3.5 h-3.5" />
+            Download Template
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => fileRef.current?.click()}
+            disabled={importing}
+            className="gap-1.5"
+          >
+            {importing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+            Import Ground Truth
+          </Button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".json"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) importGroundTruth(file);
+              e.target.value = "";
+            }}
+          />
+        </div>
       </div>
+
+      {/* Import result banner */}
+      {importResult && (
+        <div className="flex items-center gap-2 px-4 py-2.5 bg-emerald-950/40 border border-emerald-800/50 rounded-lg text-sm">
+          <span className="text-emerald-400 font-medium">{importResult.matched} claims matched</span>
+          {importResult.unmatched > 0 && (
+            <span className="text-muted-foreground">· {importResult.unmatched} unmatched</span>
+          )}
+          <span className="text-muted-foreground ml-auto">Ground truth set — run eval below</span>
+        </div>
+      )}
+
+      {error && (
+        <div className="px-4 py-2.5 bg-red-950/40 border border-red-800/50 rounded-lg text-sm text-red-400">
+          {error}
+        </div>
+      )}
 
       {/* Eval trigger */}
       {!evalData && (
@@ -66,19 +156,15 @@ export default function AccuracyPage() {
           <BarChart2 className="w-8 h-8 text-muted-foreground/40" />
           <p className="text-sm text-muted-foreground">Run precision/recall analysis against ground-truth labels</p>
           <Button onClick={runEval} disabled={loading} className="bg-emerald-600 hover:bg-emerald-500 text-white">
-            {loading ? <><Loader2 className="w-4 h-4 animate-spin" />Computing...</> : "Compute Accuracy"}
+            {loading ? <><Loader2 className="w-4 h-4 animate-spin mr-2" />Computing...</> : "Compute Accuracy"}
           </Button>
-          {error && <p className="text-sm text-red-400">{error}</p>}
         </div>
       )}
 
       {evalData && (
         <div className="space-y-8">
-          {/* Metrics */}
           <section>
-            <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-4">
-              Metrics
-            </h2>
+            <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-4">Metrics</h2>
             <MetricsBar
               precision={evalData.precision}
               recall={evalData.recall}
@@ -87,11 +173,8 @@ export default function AccuracyPage() {
             />
           </section>
 
-          {/* Confusion matrix */}
           <section>
-            <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-4">
-              Confusion Matrix
-            </h2>
+            <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-4">Confusion Matrix</h2>
             <ConfusionMatrix
               tp={evalData.matrix.tp}
               fp={evalData.matrix.fp}
@@ -100,7 +183,6 @@ export default function AccuracyPage() {
             />
           </section>
 
-          {/* Misclassified */}
           {evalData.misclassified.length > 0 && (
             <section>
               <div className="flex items-center justify-between mb-3">
@@ -113,7 +195,6 @@ export default function AccuracyPage() {
             </section>
           )}
 
-          {/* Re-run button */}
           <Button variant="outline" size="sm" onClick={runEval} disabled={loading}>
             {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Re-evaluate"}
           </Button>

@@ -1,0 +1,15 @@
+import { createClient } from "@supabase/supabase-js";
+import { config } from "dotenv";
+config({ path: ".env.local" });
+
+async function main() {
+  const db = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+  const { error: e1 } = await db.from("candidates").select("employers").limit(1);
+  console.log("employers:", e1 ? "MISSING — run migration" : "EXISTS");
+  const { error: e2 } = await db.from("claims").select("company").limit(1);
+  console.log("company:  ", e2 ? "MISSING — run migration" : "EXISTS");
+}
+main();

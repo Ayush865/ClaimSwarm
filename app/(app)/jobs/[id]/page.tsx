@@ -5,7 +5,7 @@ import { notFound } from "next/navigation";
 import { SwarmGrid } from "@/components/swarm/SwarmGrid";
 import Link from "next/link";
 import { ArrowLeft, BarChart2, Users, FlaskConical } from "lucide-react";
-import type { Job, Claim } from "@/lib/types";
+import type { Job, Claim, Candidate } from "@/lib/types";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -18,9 +18,10 @@ export default async function JobPage({ params }: PageProps) {
   const { id } = await params;
   const db = createServerClient();
 
-  const [{ data: job }, { data: claims }] = await Promise.all([
+  const [{ data: job }, { data: claims }, { data: candidates }] = await Promise.all([
     db.from("jobs").select("*").eq("id", id).single(),
     db.from("claims").select("*").eq("job_id", id).order("created_at", { ascending: true }),
+    db.from("candidates").select("id, name, github_handle").eq("job_id", id).order("created_at", { ascending: true }),
   ]);
 
   if (!job) notFound();
@@ -28,6 +29,7 @@ export default async function JobPage({ params }: PageProps) {
 
   const typedJob = job as unknown as Job;
   const typedClaims = (claims ?? []) as unknown as Claim[];
+  const typedCandidates = (candidates ?? []) as unknown as Pick<Candidate, "id" | "name" | "github_handle">[];
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-8 space-y-6">
@@ -62,15 +64,13 @@ export default async function JobPage({ params }: PageProps) {
           <Users className="w-3.5 h-3.5" />
           Candidates
         </Link>
-        {typedJob.source === "synthetic" && (
-          <Link
-            href={`/jobs/${id}/accuracy`}
-            className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5"
-          >
-            <BarChart2 className="w-3.5 h-3.5" />
-            Accuracy
-          </Link>
-        )}
+        <Link
+          href={`/jobs/${id}/accuracy`}
+          className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5"
+        >
+          <BarChart2 className="w-3.5 h-3.5" />
+          Accuracy
+        </Link>
       </div>
 
       {/* Swarm grid */}
@@ -78,6 +78,7 @@ export default async function JobPage({ params }: PageProps) {
         jobId={id}
         initialClaims={typedClaims}
         initialJob={typedJob}
+        candidates={typedCandidates}
       />
 
       {/* Model badge */}
