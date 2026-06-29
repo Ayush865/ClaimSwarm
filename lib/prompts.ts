@@ -8,29 +8,41 @@ Respond ONLY with valid JSON:
 { "query": "string" }
 
 Rules:
-- CRITICAL — awards, prizes, honors, paper authorship, product creation: you MUST include the candidate's full name in the query. The goal is to find evidence that THIS SPECIFIC PERSON achieved the thing, not just that the thing exists. Without the name, you would find that the Turing Award exists but not who this person won it.
-- For employment, education, or general skills claims: the candidate name is optional — focus on verifiable institutional facts instead.
-- Put exact award names, paper titles, and product names in double quotes.
+- CREATION/AUTHORSHIP claims ("created X", "invented X", "original author of X", "founded X"): Do NOT include the candidate's name. Instead write a query that finds who actually created the thing — e.g. "React.js creator history origin" or "Next.js who created founded". The verifier needs to know the real creator to detect a false attribution. The candidate's name will not help here.
+- FACTUAL STATEMENTS about third parties ("X was founded by Y", "X has N employees", "X raised $Nm in funding", "X was acquired by Y in year Z"): These are claims about a company or entity, not personal achievements. Do NOT include the candidate's name. Write a query that verifies the stated fact — e.g. "Stripe founded year founders" or "Collison brothers founded Stripe 2010". The goal is to check whether the stated fact is true, not whether the candidate did it.
+- AWARDS/PRIZES ("won X award", "received X prize"): Include the candidate's full name. The goal is to find evidence this specific person won it.
+- PAPER AUTHORSHIP ("co-authored paper X"): Include the candidate's name + paper title.
+- EMPLOYMENT/EDUCATION ("worked at X", "degree from Y"): Focus on the institution/company; candidate name optional.
+- Put exact award names, paper titles, and product/framework names in double quotes.
 - Include year if the claim names one.
-- Replace first-person language: "I created X" → candidate name + "created X".
+- Replace first-person language: "I created X" → query about who created X.
 - Keep the query under 120 characters.
 - Do NOT add site: filters.
 
 Examples:
+  Claim: "Original creator of React.js at Facebook" (candidate: Jordan Smith)
+  Query: "React.js" creator inventor history origin
+
+  Claim: "Created the Next.js framework at Vercel" (candidate: Jordan Smith)
+  Query: "Next.js" who created founded origin history
+
   Claim: "Won the ACM Turing Award in 2020" (candidate: Jane Smith)
   Query: "Jane Smith" "ACM Turing Award" 2020
 
   Claim: "Co-authored 'Attention Is All You Need' at NeurIPS 2017" (candidate: John Doe)
   Query: "John Doe" "Attention Is All You Need" NeurIPS 2017 author
 
-  Claim: "Won the Nobel Prize in Physics 2022" (candidate: Maria Garcia)
-  Query: "Maria Garcia" "Nobel Prize" Physics 2022
-
   Claim: "Co-created Create React App at Facebook" (candidate: Alex Rivera)
-  Query: "Alex Rivera" "Create React App" creator Facebook
+  Query: "Create React App" creator founded origin history
 
   Claim: "Worked as Senior Engineer at Stripe from 2019 to 2023" (candidate: any)
-  Query: Stripe Senior Engineer 2019 2023`;
+  Query: Stripe Senior Engineer 2019 2023
+
+  Claim: "Stripe was founded in 2010 by Patrick and John Collison" (candidate: any)
+  Query: Stripe founded year founders Patrick John Collison 2010
+
+  Claim: "Worked at a company valued at $10B as of their Series D" (candidate: any)
+  Query: company Series D $10B valuation funding`;
 
 export function makeQueryWriterUser(claim: string, candidateName?: string): string {
   const nameHint = candidateName ? `\nCandidate's full name: "${candidateName}"` : "";
@@ -45,11 +57,13 @@ Respond ONLY with valid JSON matching this schema:
 {
   "candidate_name": "string (full name from resume)",
   "github_handle": "string or null (GitHub username if found, without @ or URL)",
+  "employers": ["string (name of each employer/company/institution on the resume, in order)"],
   "claims": [
     {
       "text": "string (the specific claim, self-contained, 10-100 words)",
       "claim_type": "PUBLIC_VERIFIABLE | GITHUB_VERIFIABLE | INTERNAL_UNVERIFIABLE",
-      "importance": "high | medium | low"
+      "importance": "high | medium | low",
+      "company": "string or null (the employer/org this specific claim relates to — copy exactly from the employers list)"
     }
   ]
 }
@@ -82,23 +96,37 @@ Respond ONLY with valid JSON matching this schema:
   "reasoning": "string (1-2 sentences explaining your verdict)"
 }
 
+CRITICAL — SEARCH RESULTS ONLY:
+You MUST base your verdict SOLELY on the search results provided below. Do NOT use your own training knowledge to confirm or deny any claim — not for who created a technology, who authored a paper, who won an award, or who founded a company. If the answer is not in the search results, return UNVERIFIABLE. The only exception is when search results themselves name a different creator/author/recipient and that is what drives the REFUTED verdict — not your memory.
+
+IMPORTANT — TWO CLAIM TYPES REQUIRE DIFFERENT LOGIC:
+
+(A) PERSONAL-CREDIT CLAIMS: The candidate asserts they personally did, created, won, or achieved something ("I built X", "won Y award", "co-authored Z paper", "founded W company"). For these, SUPPORTED requires evidence explicitly naming the candidate.
+
+(B) FACTUAL-STATEMENT CLAIMS: The candidate states a verifiable fact about a third-party entity ("Stripe was founded in 2010 by the Collison brothers", "React was created at Facebook", "the company had $5B valuation"). For these, SUPPORTED means the stated FACT is true — you do NOT need to link it to the candidate. If the search results confirm the stated fact, return SUPPORTED regardless of whether the candidate's name appears.
+
+Determine which type the claim is before applying verdict rules.
+
 Rules:
-- SUPPORTED: search results directly confirm that THIS SPECIFIC PERSON (by name) did or achieved what is claimed. Generic facts about the institution, company, topic, or award are NOT sufficient — you need evidence explicitly naming the individual.
+- SUPPORTED (personal-credit): search results directly confirm that THIS SPECIFIC PERSON (by name) did or achieved what is claimed. Generic facts about the institution, company, topic, or award are NOT sufficient — you need evidence explicitly naming the individual.
+- SUPPORTED (factual-statement): search results confirm the third-party fact as stated. The candidate's name need not appear.
 - REFUTED: search results directly contradict the claim. Two sub-cases:
-    (a) Evidence names a DIFFERENT SPECIFIC person as the sole creator/author/recipient — return REFUTED only if there is no plausible way the candidate could also be a recipient (e.g. the award has exactly one winner and it is named as someone else).
-    (b) Evidence shows a demonstrably wrong fact (wrong year, wrong company, non-existent entity).
-- UNVERIFIABLE: the institution/company/award/topic exists but there is no evidence specifically linking THIS PERSON to the claimed credential, role, or achievement.
-- KEY RULE — awards and prizes with a fixed winner list: if the award has a small, named set of recipients and the candidate's name does not appear among them, return REFUTED (not UNVERIFIABLE). Example: "Nobel Prize in Physics 2022" has exactly 3 named winners — if the candidate is not one of them, the claim is refuted.
+    (a) Search results name a DIFFERENT SPECIFIC person as the sole creator/author/recipient — return REFUTED only when search results make this clear and there is no plausible way the candidate could also qualify.
+    (b) Search results show a demonstrably wrong fact (wrong year, wrong company, non-existent entity).
+- UNVERIFIABLE: the institution/company/award/topic exists but there is no evidence in the search results specifically linking THIS PERSON to the claimed credential, role, or achievement.
+- KEY RULE — creator/author attribution: if search results name a specific person as the creator or primary author of something the candidate claims to have created, and that person is different from the candidate, return REFUTED. This determination must come from search results, not your training data.
+- KEY RULE — awards and prizes with a fixed winner list: if search results show a small, named set of recipients and the candidate's name does not appear among them, return REFUTED.
 - KEY RULE — paper authorship: if results show the paper's author list and the candidate's name is absent, return REFUTED. If results discuss the paper but do not show the full author list, return UNVERIFIABLE.
-- KEY RULE — common names: if results show OTHER people with the same name at different institutions or companies, that does NOT refute the claim. Names are not unique identifiers — a different "Priya Mehta" at a different university tells you nothing about this candidate. Return UNVERIFIABLE in this case.
+- KEY RULE — common names: if results show OTHER people with the same name at different institutions or companies, that does NOT refute the claim. Return UNVERIFIABLE in this case.
 - KEY RULE — degree/employment claims: finding that "Harvard has an MBA program" or "Google employs engineers" does NOT support a claim that a specific person holds that degree or worked there. Return UNVERIFIABLE unless a result names the individual directly.
-- confidence: 0.9 when the individual is named directly and unambiguously in evidence; 0.5–0.7 for strong indirect evidence; 0.3 or lower for weak or ambiguous evidence
+- confidence: 0.9 when the individual is named directly and unambiguously in search results; 0.5–0.7 for strong indirect evidence; 0.3 or lower for weak or ambiguous evidence
 - Include only the top 2–3 most relevant evidence items`;
 
 export function makeVerifierPublicUser(
   claim: string,
   searchResults: Array<{ snippet: string; url: string; title: string; source: string }>,
-  candidateName?: string
+  candidateName?: string,
+  companyContext?: string
 ): string {
   const snippets = searchResults
     .map((r, i) => `[${i + 1}] ${r.title}\nURL: ${r.url}\n${r.snippet}`)
@@ -106,7 +134,10 @@ export function makeVerifierPublicUser(
   const nameHint = candidateName
     ? `\nCandidate's full name: "${candidateName}" — use this to match against names in the search results.\n`
     : "";
-  return `Claim to verify: "${claim}"${nameHint}\n\nSearch results:\n${snippets || "No results found."}`;
+  const companyHint = companyContext?.trim()
+    ? `\nCompany context (web search about the employer this claim relates to — use to assess plausibility):\n${companyContext.trim()}\n`
+    : "";
+  return `Claim to verify: "${claim}"${nameHint}${companyHint}\n\nSearch results:\n${snippets || "No results found."}`;
 }
 
 export const VERIFIER_INTERNAL_SYSTEM = `You are a resume consistency checker. Given a claim and the candidate's full list of claims, identify timeline conflicts, overlapping full-time roles, or logically impossible metrics.
@@ -122,6 +153,7 @@ Respond ONLY with valid JSON matching this schema:
 Rules:
 - SUSPICIOUS — flag ONLY these specific situations:
   * Two or more simultaneous full-time roles with the same or overlapping date range
+  * A single claim that itself uses the words "simultaneously", "concurrent", "at the same time", or "while also" to describe holding a full-time role alongside another activity — the word choice alone discloses a conflict the candidate acknowledges; flag at 0.9 confidence even if the second role is not in the claim list
   * A metric that is logically impossible given the stated context (e.g. $500M revenue at a 5-person startup in 6 months; leading 200 engineers as the sole employee listed; 50M users at a company founded last month)
   * Two claims that directly and explicitly contradict each other
 - UNVERIFIABLE: claim is plausible and consistent with the other claims — return this in all other cases
@@ -129,7 +161,7 @@ Rules:
   * Impressive but plausible metrics at large companies (e.g. "reduced costs 45% at Google", "saved $12M at AWS", "grew adoption 10x at Meta") — large companies have large budgets and experienced engineers produce real impact; these are not suspicious without specific cross-claim contradiction
   * A single impressive number without a contradicting claim
   * Large team sizes (30–50 engineers) at established companies — senior engineers and managers routinely lead teams this size
-- confidence: 0.9 for explicit overlapping date ranges or "simultaneously"/"concurrent"; 0.7 for strongly implied conflicts; do NOT use 0.5 or lower for SUSPICIOUS — if confidence would be below 0.7, return UNVERIFIABLE instead
+- confidence: 0.9 for explicit overlapping date ranges, self-disclosed "simultaneously"/"concurrent" conflicts, or directly contradicting claims; 0.7 for strongly implied conflicts; do NOT use 0.5 or lower for SUSPICIOUS — if confidence would be below 0.7, return UNVERIFIABLE instead
 - Do NOT return UNVERIFIABLE just because you cannot verify a metric externally — the question is only internal consistency`;
 
 export function makeVerifierInternalUser(
@@ -145,17 +177,20 @@ export function makeVerifierInternalUser(
 
 export const BATCH_CONSISTENCY_SYSTEM = `You are a resume consistency auditor. Given a numbered list of internal (unverifiable) claims from ONE candidate's resume, identify timeline conflicts, overlapping full-time roles, or logically impossible metrics.
 
-Respond ONLY with valid JSON:
+Respond ONLY with valid JSON in exactly this shape:
 {
   "verdicts": [
-    { "index": 0, "verdict": "SUSPICIOUS|UNVERIFIABLE", "confidence": 0.0, "reasoning": "..." }
+    { "index": 0, "verdict": "UNVERIFIABLE", "confidence": 0.5, "reasoning": "No conflict detected." }
   ],
-  "overall_pattern": "one sentence describing the main red flag, or null"
+  "overall_pattern": null
 }
 
+For the "verdict" field use ONLY one of these two exact strings: "SUSPICIOUS" or "UNVERIFIABLE"
+
 Rules:
-- SUSPICIOUS: flag ONLY when this claim conflicts with another claim in the list, OR when a metric is logically impossible given the stated context. Specific cases:
-  * Simultaneous full-time jobs with overlapping date ranges
+- SUSPICIOUS: flag ONLY when this claim conflicts with another claim in the list, OR when a metric is logically impossible given the stated context, OR when the claim itself discloses a conflict. Specific cases:
+  * Simultaneous full-time jobs with overlapping date ranges (cross-claim conflict)
+  * A single claim that itself uses the words "simultaneously", "concurrent", "at the same time", or "while also" to describe holding a full-time role alongside another activity — the wording alone discloses a conflict; flag at 0.9 confidence even if no second role appears elsewhere in the list
   * A metric impossible for the stated context (e.g. $500M revenue at a 5-person startup in 6 months; 200 engineers managed by someone listed as a solo contributor; 50M users at a company founded last month)
   * Two claims that explicitly contradict each other
 - UNVERIFIABLE: claim is plausible and consistent with all other claims — use this in all other cases
@@ -163,15 +198,19 @@ Rules:
   * Impressive metrics at large, established companies (cost reductions, growth percentages, dollar savings, team sizes of 10–50) — these are normal at companies like Google, AWS, Meta, Stripe
   * A large number by itself without a contradicting claim
   * Claims that are unverifiable externally but internally consistent
-- confidence: 0.9 for explicit overlapping date ranges or "simultaneously"; 0.7 for strongly implied conflicts; do NOT produce SUSPICIOUS with confidence below 0.7 — use UNVERIFIABLE instead
+- confidence: 0.9 for explicit overlapping date ranges, self-disclosed "simultaneously"/"concurrent" conflicts, or directly contradicting claims; 0.7 for strongly implied conflicts; do NOT produce SUSPICIOUS with confidence below 0.7 — use UNVERIFIABLE instead
 - Return exactly one verdict object per input claim, using the same index number
 - overall_pattern: one sentence summarizing the clearest red flag across all claims, or null if no genuine conflicts found`;
 
 export function makeBatchConsistencyUser(
-  claims: Array<{ index: number; text: string }>
+  claims: Array<{ index: number; text: string }>,
+  companyContext?: string   // optional: web-search snippets about companies mentioned in the resume
 ): string {
   const list = claims.map((c) => `${c.index}. ${c.text}`).join("\n");
-  return `Assess consistency across ALL these claims from the same candidate:\n\n${list}`;
+  const ctx = companyContext?.trim()
+    ? `\n\nCompany Context (from web search — use this to assess whether claimed metrics are plausible for the stated company size/stage):\n${companyContext.trim()}`
+    : "";
+  return `Assess consistency across ALL these claims from the same candidate:${ctx}\n\n${list}`;
 }
 
 export const AGGREGATOR_SYSTEM = `You are a recruiter assistant. Given a candidate's trust score and their claim verdicts, write a single concise sentence summarizing the trustworthiness of their resume. Be factual and professional.
