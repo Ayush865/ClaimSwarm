@@ -1,111 +1,159 @@
 /**
- * Provider-agnostic LLM client — works with any OpenAI-compatible endpoint.
+ * Multi-provider LLM client with round-robin load distribution.
  *
- * Three model tiers let each agent use a model sized for its reasoning load:
- *   fast      — trivial generation (aggregator summary sentence)
- *   balanced  — classification + pattern matching (extractor, github verifier)
- *   reasoning — critical evaluation, false-positive resistance (public verifier,
- *               internal consistency checker)
+ * Providers are tried in rotation. On 429, the provider is marked rate-limited
+ * and the next call immediately goes to a different provider — no waiting.
+ * If every provider is rate-limited, we wait for the soonest unblock.
  *
- * Set tier-specific model vars; all fall back to LLM_MODEL if unset.
+ * Provider priority order (first configured wins the next slot):
+ *   1. NVIDIA NIM account 1  — NVIDIA_API_KEY
+ *   2. NVIDIA NIM account 2  — NVIDIA_API_KEY_2
+ *   3. Cerebras              — CEREBRAS_API_KEY
+ *   4. SambaNova             — SAMBANOVA_API_KEY
+ *   5. Groq                  — GROQ_API_KEY
+ *   6. Gemini                — GEMINI_API_KEY  (most generous TPM, last resort)
  *
- * Primary provider options (pick one):
- *
- *   Groq
- *     GROQ_API_KEY=<key>
- *     LLM_MODEL_FAST=llama-3.1-8b-instant
- *     LLM_MODEL_BALANCED=llama-3.1-8b-instant
- *     LLM_MODEL_REASONING=llama-3.1-8b-instant
- *
- *   NVIDIA NIM
- *     LLM_BASE_URL=https://integrate.api.nvidia.com/v1
- *     LLM_API_KEY=<nvidia key>
- *     LLM_MODEL_FAST=meta/llama-3.1-8b-instruct
- *     LLM_MODEL_BALANCED=meta/llama-3.1-70b-instruct
- *     LLM_MODEL_REASONING=meta/llama-3.1-405b-instruct
- *
- *   DeepSeek
- *     LLM_BASE_URL=https://api.deepseek.com
- *     LLM_API_KEY=<key>
- *     LLM_MODEL_FAST=deepseek-chat
- *     LLM_MODEL_BALANCED=deepseek-chat
- *     LLM_MODEL_REASONING=deepseek-reasoner
- *
- * Gemini fallback (automatic — kicks in when primary provider hard-fails):
- *   GEMINI_API_KEY=<key>          ← get from aistudio.google.com
- *   GEMINI_MODEL_FAST=gemini-2.0-flash        (optional, these are the defaults)
- *   GEMINI_MODEL_BALANCED=gemini-1.5-flash
- *   GEMINI_MODEL_REASONING=gemini-1.5-pro
+ * Model tiers per provider (set in .env.local):
+ *   NVIDIA_MODEL_FAST / BALANCED / REASONING
+ *   NVIDIA_MODEL_2_FAST / BALANCED / REASONING
+ *   CEREBRAS_MODEL_FAST / BALANCED / REASONING
+ *   SAMBANOVA_MODEL_FAST / BALANCED / REASONING
+ *   GROQ_MODEL_FAST / BALANCED / REASONING
+ *   GEMINI_MODEL_FAST / BALANCED / REASONING
  */
 
 import OpenAI from "openai";
 import { z } from "zod";
 
-// ── Primary provider ──────────────────────────────────────────────────────────
-
-const PRIMARY_BASE_URL =
-  process.env.LLM_BASE_URL ??
-  (process.env.GROQ_API_KEY
-    ? "https://api.groq.com/openai/v1"
-    : "https://integrate.api.nvidia.com/v1");
-
-const PRIMARY_API_KEY =
-  process.env.LLM_API_KEY ??
-  process.env.GROQ_API_KEY ??
-  process.env.NVIDIA_API_KEY ??
-  process.env.DEEPSEEK_API_KEY ??
-  "";
-
-const MODEL_DEFAULT =
-  process.env.LLM_MODEL ??
-  process.env.GROQ_MODEL ??
-  "meta/llama-3.1-8b-instruct";
-
-export const MODEL_FAST      = process.env.LLM_MODEL_FAST      ?? MODEL_DEFAULT;
-export const MODEL_BALANCED  = process.env.LLM_MODEL_BALANCED  ?? MODEL_DEFAULT;
-export const MODEL_REASONING = process.env.LLM_MODEL_REASONING ?? MODEL_DEFAULT;
-
-// ── Gemini fallback ───────────────────────────────────────────────────────────
-
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY ?? "";
-const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
-
-const GEMINI_MODEL_FAST      = process.env.GEMINI_MODEL_FAST      ?? "gemini-2.0-flash";
-const GEMINI_MODEL_BALANCED  = process.env.GEMINI_MODEL_BALANCED  ?? "gemini-1.5-flash";
-const GEMINI_MODEL_REASONING = process.env.GEMINI_MODEL_REASONING ?? "gemini-1.5-pro";
-
-// ── Clients ───────────────────────────────────────────────────────────────────
-
-const primaryClient = new OpenAI({ apiKey: PRIMARY_API_KEY, baseURL: PRIMARY_BASE_URL });
-
-// Gemini client is only created when a key is provided
-const geminiClient = GEMINI_API_KEY
-  ? new OpenAI({ apiKey: GEMINI_API_KEY, baseURL: GEMINI_BASE_URL })
-  : null;
-
 export type ModelTier = "fast" | "balanced" | "reasoning";
 
-function resolveModel(tier?: ModelTier): string {
-  switch (tier) {
-    case "fast":      return MODEL_FAST;
-    case "balanced":  return MODEL_BALANCED;
-    case "reasoning": return MODEL_REASONING;
-    default:          return MODEL_DEFAULT;
-  }
+// ── Provider registry ─────────────────────────────────────────────────────────
+
+interface ProviderDef {
+  name: string;
+  client: OpenAI;
+  models: Record<ModelTier, string>;
 }
 
-function resolveGeminiModel(tier?: ModelTier): string {
-  switch (tier) {
-    case "fast":      return GEMINI_MODEL_FAST;
-    case "balanced":  return GEMINI_MODEL_BALANCED;
-    case "reasoning": return GEMINI_MODEL_REASONING;
-    default:          return GEMINI_MODEL_FAST;
-  }
+function def(
+  name: string,
+  apiKey: string,
+  baseURL: string,
+  fast: string,
+  balanced: string,
+  reasoning: string
+): ProviderDef {
+  return {
+    name,
+    client: new OpenAI({ apiKey, baseURL }),
+    models: { fast, balanced, reasoning },
+  };
 }
 
-// 2 retries × ~15s wait = 30s max per failed call, safe within Vercel's 60s cap.
-// Increase via LLM_MAX_RETRIES on a paid tier with a higher function timeout.
-const MAX_RETRIES = Number(process.env.LLM_MAX_RETRIES ?? 2);
+function buildPool(): ProviderDef[] {
+  const pool: ProviderDef[] = [];
+
+  if (process.env.NVIDIA_API_KEY) {
+    pool.push(def(
+      "nvidia-1",
+      process.env.NVIDIA_API_KEY,
+      "https://integrate.api.nvidia.com/v1",
+      process.env.NVIDIA_MODEL_FAST      ?? "deepseek-ai/deepseek-v4-flash",
+      process.env.NVIDIA_MODEL_BALANCED  ?? "deepseek-ai/deepseek-v4-flash",
+      process.env.NVIDIA_MODEL_REASONING ?? "deepseek-ai/deepseek-v4-flash",
+    ));
+  }
+
+  if (process.env.NVIDIA_API_KEY_2) {
+    pool.push(def(
+      "nvidia-2",
+      process.env.NVIDIA_API_KEY_2,
+      "https://integrate.api.nvidia.com/v1",
+      process.env.NVIDIA_MODEL_2_FAST      ?? "meta/llama-3.1-8b-instruct",
+      process.env.NVIDIA_MODEL_2_BALANCED  ?? "meta/llama-3.1-8b-instruct",
+      process.env.NVIDIA_MODEL_2_REASONING ?? "meta/llama-3.1-8b-instruct",
+    ));
+  }
+
+  if (process.env.CEREBRAS_API_KEY) {
+    pool.push(def(
+      "cerebras",
+      process.env.CEREBRAS_API_KEY,
+      "https://api.cerebras.ai/v1",
+      process.env.CEREBRAS_MODEL_FAST      ?? "llama3.1-8b",
+      process.env.CEREBRAS_MODEL_BALANCED  ?? "llama-3.3-70b",
+      process.env.CEREBRAS_MODEL_REASONING ?? "llama-3.3-70b",
+    ));
+  }
+
+  if (process.env.SAMBANOVA_API_KEY) {
+    pool.push(def(
+      "sambanova",
+      process.env.SAMBANOVA_API_KEY,
+      "https://api.sambanova.ai/v1",
+      process.env.SAMBANOVA_MODEL_FAST      ?? "Meta-Llama-3.1-8B-Instruct",
+      process.env.SAMBANOVA_MODEL_BALANCED  ?? "Meta-Llama-3.3-70B-Instruct",
+      process.env.SAMBANOVA_MODEL_REASONING ?? "Meta-Llama-3.1-405B-Instruct",
+    ));
+  }
+
+  if (process.env.GROQ_API_KEY) {
+    pool.push(def(
+      "groq",
+      process.env.GROQ_API_KEY,
+      "https://api.groq.com/openai/v1",
+      process.env.GROQ_MODEL_FAST      ?? "llama-3.1-8b-instant",
+      process.env.GROQ_MODEL_BALANCED  ?? "llama-3.1-8b-instant",
+      process.env.GROQ_MODEL_REASONING ?? "llama-3.3-70b-versatile",
+    ));
+  }
+
+  if (process.env.GEMINI_API_KEY) {
+    pool.push(def(
+      "gemini",
+      process.env.GEMINI_API_KEY,
+      "https://generativelanguage.googleapis.com/v1beta/openai/",
+      process.env.GEMINI_MODEL_FAST      ?? "gemini-2.0-flash",
+      process.env.GEMINI_MODEL_BALANCED  ?? "gemini-1.5-flash",
+      process.env.GEMINI_MODEL_REASONING ?? "gemini-1.5-pro",
+    ));
+  }
+
+  return pool;
+}
+
+const POOL = buildPool();
+
+// ── Round-robin + rate-limit state ────────────────────────────────────────────
+// Module-level: persists across parallel calls within the same serverless instance.
+
+let rrCursor = 0;
+const blockedUntil = new Map<string, number>(); // provider → timestamp
+
+function markBlocked(name: string, ms: number) {
+  blockedUntil.set(name, Date.now() + ms);
+  console.warn(`[llm] ${name} rate-limited for ${(ms / 1000).toFixed(0)}s`);
+}
+
+function availablePool(): ProviderDef[] {
+  const now = Date.now();
+  return POOL.filter((p) => (blockedUntil.get(p.name) ?? 0) <= now);
+}
+
+function pickProvider(): ProviderDef {
+  const available = availablePool();
+  if (available.length === 0) {
+    // All blocked — return the one unblocking soonest
+    return POOL.reduce((a, b) =>
+      (blockedUntil.get(a.name) ?? 0) <= (blockedUntil.get(b.name) ?? 0) ? a : b
+    );
+  }
+  const p = available[rrCursor % available.length];
+  rrCursor++;
+  return p;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 export interface ChatJSONResult<T> {
   data: T;
@@ -113,130 +161,107 @@ export interface ChatJSONResult<T> {
   model: string;
 }
 
+// Exported for cost.ts model-name matching
+export const MODEL_FAST      = process.env.NVIDIA_MODEL_FAST      ?? "deepseek-ai/deepseek-v4-flash";
+export const MODEL_BALANCED  = process.env.NVIDIA_MODEL_BALANCED  ?? "deepseek-ai/deepseek-v4-flash";
+export const MODEL_REASONING = process.env.NVIDIA_MODEL_REASONING ?? "deepseek-ai/deepseek-v4-flash";
+
 function sleep(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
+  return new Promise<void>((r) => setTimeout(r, ms));
 }
 
 function stripFences(text: string): string {
-  return text
-    .replace(/^```(?:json)?\s*/m, "")
-    .replace(/\s*```\s*$/m, "")
-    .trim();
+  return text.replace(/^```(?:json)?\s*/m, "").replace(/\s*```\s*$/m, "").trim();
 }
 
 function parseRetryAfterMs(err: unknown): number {
   const msg = err instanceof Error ? err.message : String(err);
   const match = msg.match(/try again in (\d+\.?\d*)s/i);
-  if (match) return Math.ceil(parseFloat(match[1]) * 1000) + 1500;
+  if (match) return Math.ceil(parseFloat(match[1]) * 1000) + 500;
   const headers = (err as { headers?: Record<string, string> })?.headers;
   const ra = headers?.["retry-after"];
-  if (ra && !isNaN(Number(ra))) return Math.ceil(Number(ra) * 1000) + 1500;
-  return 15000;
+  if (ra && !isNaN(Number(ra))) return Math.ceil(Number(ra) * 1000) + 500;
+  return 20000;
 }
 
 function tryParse<T>(schema: z.ZodSchema<T>, raw: string): T | null {
   try {
     const obj = JSON.parse(stripFences(raw));
-    const result = schema.safeParse(obj);
-    if (!result.success) {
-      console.warn("[llm] Zod issues:", result.error.issues.slice(0, 3));
-    }
-    return result.success ? result.data : null;
+    const r = schema.safeParse(obj);
+    if (!r.success) console.warn("[llm] Zod issues:", r.error.issues.slice(0, 3));
+    return r.success ? r.data : null;
   } catch {
     return null;
   }
 }
 
-// ── Core retry loop (client-agnostic) ────────────────────────────────────────
+const JSON_MODE = process.env.LLM_JSON_MODE !== "false";
 
-async function callWithRetry(
+// ── Single HTTP call ──────────────────────────────────────────────────────────
+
+async function singleCall(
   client: OpenAI,
-  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
-  model: string,
-  timeoutMs: number,
-  maxRetries = MAX_RETRIES
-): Promise<OpenAI.Chat.Completions.ChatCompletion> {
-  let lastErr: unknown;
-
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    if (attempt > 0) {
-      const waitMs = parseRetryAfterMs(lastErr);
-      console.log(`[llm] retry ${attempt}/${maxRetries - 1} — waiting ${(waitMs / 1000).toFixed(1)}s (${model})`);
-      await sleep(waitMs);
-    }
-
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-    try {
-      const resp = await client.chat.completions.create(
-        { model, messages, temperature: 0, max_tokens: 1024, response_format: { type: "json_object" } },
-        { signal: controller.signal }
-      );
-      clearTimeout(timer);
-      return resp;
-    } catch (err: unknown) {
-      clearTimeout(timer);
-      lastErr = err;
-      const status = (err as { status?: number })?.status;
-      const isRetryable = status === 429 || (status !== undefined && status >= 500);
-      const isAbort = err instanceof Error && (err.name === "AbortError" || err.message?.includes("abort"));
-      if (!isRetryable && !isAbort) throw err;
-      console.warn(`[llm] attempt ${attempt + 1} failed: status=${status} model=${model}`);
-    }
-  }
-
-  throw lastErr;
-}
-
-// ── Attempt one full call+repair cycle on a given client ─────────────────────
-
-async function tryWithClient<T>(
-  client: OpenAI,
-  schema: z.ZodSchema<T>,
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
   model: string,
   timeoutMs: number
-): Promise<ChatJSONResult<T> | null> {
+): Promise<OpenAI.Chat.Completions.ChatCompletion> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const resp = await callWithRetry(client, messages, model, timeoutMs);
-    const raw = resp.choices[0]?.message?.content ?? "{}";
-    const tokens = { input: resp.usage?.prompt_tokens ?? 0, output: resp.usage?.completion_tokens ?? 0 };
-
-    const parsed = tryParse(schema, raw);
-    if (parsed !== null) return { data: parsed, tokens, model: resp.model };
-
-    // Repair pass on the same client
-    console.warn(`[llm] schema parse failed on ${model}, attempting repair`);
-    const repairResp = await callWithRetry(
-      client,
-      [
-        ...messages,
-        { role: "assistant" as const, content: raw },
-        {
-          role: "user" as const,
-          content:
-            'Your previous response did not match the required JSON schema. Return ONLY this exact JSON shape:\n{"verdict":"SUPPORTED|REFUTED|UNVERIFIABLE|SUSPICIOUS","confidence":0.0,"evidence":[{"snippet":"...","url":"...","source":"..."}],"reasoning":"..."}',
-        },
-      ],
-      model,
-      timeoutMs
+    const resp = await client.chat.completions.create(
+      {
+        model, messages, temperature: 0, max_tokens: 1024,
+        ...(JSON_MODE ? { response_format: { type: "json_object" } } : {}),
+      },
+      { signal: controller.signal }
     );
-
-    const repairRaw = repairResp.choices[0]?.message?.content ?? "{}";
-    const repairTokens = {
-      input: tokens.input + (repairResp.usage?.prompt_tokens ?? 0),
-      output: tokens.output + (repairResp.usage?.completion_tokens ?? 0),
-    };
-
-    const repaired = tryParse(schema, repairRaw);
-    if (repaired !== null) return { data: repaired, tokens: repairTokens, model: resp.model };
-
-    console.error(`[llm] repair failed on ${model}`);
-    return null;
-  } catch {
-    return null;
+    clearTimeout(timer);
+    return resp;
+  } catch (err) {
+    clearTimeout(timer);
+    throw err;
   }
+}
+
+// ── Per-provider attempt (call + optional repair) ─────────────────────────────
+
+async function tryProvider<T>(
+  provider: ProviderDef,
+  schema: z.ZodSchema<T>,
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+  tier: ModelTier,
+  timeoutMs: number
+): Promise<ChatJSONResult<T>> {
+  const model = provider.models[tier];
+  const resp = await singleCall(provider.client, messages, model, timeoutMs);
+  const raw = resp.choices[0]?.message?.content ?? "{}";
+  const tokens = { input: resp.usage?.prompt_tokens ?? 0, output: resp.usage?.completion_tokens ?? 0 };
+
+  const parsed = tryParse(schema, raw);
+  if (parsed !== null) return { data: parsed, tokens, model: resp.model };
+
+  // One repair pass on the same provider
+  console.warn(`[llm] schema parse failed on ${provider.name}/${model}, attempting repair`);
+  const repairResp = await singleCall(
+    provider.client,
+    [
+      ...messages,
+      { role: "assistant" as const, content: raw },
+      { role: "user" as const, content: "Your response did not match the required JSON schema. Re-read the system prompt and return ONLY valid JSON, no markdown fences, no extra text." },
+    ],
+    model,
+    timeoutMs
+  );
+  const repairRaw = repairResp.choices[0]?.message?.content ?? "{}";
+  const repairTokens = {
+    input: tokens.input + (repairResp.usage?.prompt_tokens ?? 0),
+    output: tokens.output + (repairResp.usage?.completion_tokens ?? 0),
+  };
+
+  const repaired = tryParse(schema, repairRaw);
+  if (repaired !== null) return { data: repaired, tokens: repairTokens, model: resp.model };
+
+  throw new Error(`schema-parse-failed:${provider.name}`);
 }
 
 // ── Public entry point ────────────────────────────────────────────────────────
@@ -246,29 +271,64 @@ export async function chatJSON<T>(
   system: string,
   user: string,
   fallback: T,
-  timeoutMs = 30000,
-  tier?: ModelTier
+  timeoutMs = 45000,
+  tier: ModelTier = "fast"
 ): Promise<ChatJSONResult<T>> {
-  const primaryModel = resolveModel(tier);
+  if (POOL.length === 0) {
+    console.error("[llm] no providers configured");
+    return { data: fallback, tokens: { input: 0, output: 0 }, model: "none" };
+  }
+
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     { role: "system", content: system },
     { role: "user", content: user },
   ];
 
-  // 1. Try primary provider
-  const primaryResult = await tryWithClient(primaryClient, schema, messages, primaryModel, timeoutMs);
-  if (primaryResult !== null) return primaryResult;
+  // Try up to POOL.length × 2 times so each provider gets at least 2 chances
+  const maxAttempts = POOL.length * 2;
 
-  // 2. Primary hard-failed — try Gemini if configured
-  if (geminiClient) {
-    const geminiModel = resolveGeminiModel(tier);
-    console.warn(`[llm] primary failed (${primaryModel}), falling back to Gemini (${geminiModel})`);
-    const geminiResult = await tryWithClient(geminiClient, schema, messages, geminiModel, timeoutMs);
-    if (geminiResult !== null) return geminiResult;
-    console.error(`[llm] Gemini fallback also failed (${geminiModel})`);
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const available = availablePool();
+
+    // All providers rate-limited — wait for the soonest to unblock
+    if (available.length === 0) {
+      const soonestMs = Math.min(...POOL.map((p) => blockedUntil.get(p.name) ?? 0)) - Date.now();
+      const wait = Math.max(soonestMs + 500, 1000);
+      console.log(`[llm] all providers rate-limited, waiting ${(wait / 1000).toFixed(1)}s`);
+      await sleep(wait);
+    }
+
+    const provider = pickProvider();
+
+    try {
+      const result = await tryProvider(provider, schema, messages, tier, timeoutMs);
+      if (attempt > 0) console.log(`[llm] succeeded on ${provider.name} (attempt ${attempt + 1})`);
+      return result;
+    } catch (err: unknown) {
+      const status = (err as { status?: number })?.status;
+      const isAbort = err instanceof Error && (err.name === "AbortError" || err.message?.includes("abort"));
+
+      if (status === 429) {
+        markBlocked(provider.name, parseRetryAfterMs(err));
+        continue; // immediately try next provider
+      }
+
+      if (isAbort) {
+        console.warn(`[llm] ${provider.name} timed out after ${timeoutMs}ms, trying next`);
+        continue;
+      }
+
+      if (status !== undefined && status >= 500) {
+        console.warn(`[llm] ${provider.name} server error ${status}, trying next`);
+        continue;
+      }
+
+      // Schema parse failure or other soft error — try next provider
+      const msg = (err as Error)?.message ?? String(err);
+      console.warn(`[llm] ${provider.name} failed (${msg}), trying next`);
+    }
   }
 
-  // 3. Both failed — return safe hardcoded fallback
-  console.error("[llm] all providers failed, returning hardcoded fallback");
-  return { data: fallback, tokens: { input: 0, output: 0 }, model: primaryModel };
+  console.error("[llm] all providers exhausted, returning hardcoded fallback");
+  return { data: fallback, tokens: { input: 0, output: 0 }, model: "none" };
 }
